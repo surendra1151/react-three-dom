@@ -1,0 +1,26 @@
+{
+  "name": "react-three-dom",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Developer tool & testing bridge for React Three Fiber apps",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^2",
+    "typescript": "^5.7",
+    "tsup": "^8",
+    "vitest": "^3",
+    "eslint": "^9",
+    "prettier": "^3"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

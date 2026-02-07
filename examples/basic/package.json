@@ -1,0 +1,26 @@
+{
+  "name": "@react-three-dom/example-basic",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18",
+    "react-dom": "^18",
+    "three": "^0.171",
+    "@react-three/fiber": "^8",
+    "@react-three/drei": "^9",
+    "@react-three-dom/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@vitejs/plugin-react": "^4",
+    "vite": "^6",
+    "typescript": "^5.7"
+  }
+}
