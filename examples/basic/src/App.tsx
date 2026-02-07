@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { ThreeDomBridge } from '@react-three-dom/core';
+import { ThreeDom } from '@react-three-dom/core';
 import * as THREE from 'three';
 
 // ---------------------------------------------------------------------------
@@ -235,7 +235,7 @@ export function App() {
         shadows
       >
         {/* The bridge — renders nothing, just wires up the DOM mirror */}
-        <ThreeDomBridge />
+        <ThreeDom />
 
         {/* Scene */}
         <Lighting />

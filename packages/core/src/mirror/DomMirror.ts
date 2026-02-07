@@ -207,7 +207,7 @@ export class DomMirror {
   }
 
   // -------------------------------------------------------------------------
-  // Attribute sync (called per-frame by ThreeDomBridge)
+  // Attribute sync (called per-frame by ThreeDom)
   // -------------------------------------------------------------------------
 
   /**

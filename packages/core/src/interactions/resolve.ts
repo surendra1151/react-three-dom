@@ -6,14 +6,14 @@ import type { CanvasSize } from './projection';
 // Shared resolution helpers for interaction modules
 // ---------------------------------------------------------------------------
 
-/** Cached references to the current R3F state (set by ThreeDomBridge). */
+/** Cached references to the current R3F state (set by ThreeDom). */
 let _store: ObjectStore | null = null;
 let _camera: Camera | null = null;
 let _gl: WebGLRenderer | null = null;
 let _size: CanvasSize | null = null;
 
 /**
- * Set the current R3F state references. Called by ThreeDomBridge during setup
+ * Set the current R3F state references. Called by ThreeDom during setup
  * and on every frame to keep camera/size current.
  */
 export function setInteractionState(
@@ -40,7 +40,7 @@ export function clearInteractionState(): void {
 export function getStore(): ObjectStore {
   if (!_store) {
     throw new Error(
-      '[react-three-dom] Interaction state not initialized. Is <ThreeDomBridge> mounted?',
+      '[react-three-dom] Interaction state not initialized. Is <ThreeDom> mounted?',
     );
   }
   return _store;
@@ -50,7 +50,7 @@ export function getStore(): ObjectStore {
 export function getCamera(): Camera {
   if (!_camera) {
     throw new Error(
-      '[react-three-dom] Camera not available. Is <ThreeDomBridge> mounted?',
+      '[react-three-dom] Camera not available. Is <ThreeDom> mounted?',
     );
   }
   return _camera;
@@ -60,7 +60,7 @@ export function getCamera(): Camera {
 export function getRenderer(): WebGLRenderer {
   if (!_gl) {
     throw new Error(
-      '[react-three-dom] Renderer not available. Is <ThreeDomBridge> mounted?',
+      '[react-three-dom] Renderer not available. Is <ThreeDom> mounted?',
     );
   }
   return _gl;
@@ -70,7 +70,7 @@ export function getRenderer(): WebGLRenderer {
 export function getCanvasSize(): CanvasSize {
   if (!_size) {
     throw new Error(
-      '[react-three-dom] Canvas size not available. Is <ThreeDomBridge> mounted?',
+      '[react-three-dom] Canvas size not available. Is <ThreeDom> mounted?',
     );
   }
   return _size;

@@ -11,14 +11,16 @@ import { drag3D } from '../interactions/drag';
 import { wheel3D } from '../interactions/wheel';
 import { pointerMiss3D } from '../interactions/pointerMiss';
 import { setInteractionState, clearInteractionState } from '../interactions/resolve';
+import { SelectionManager } from '../highlight/SelectionManager';
+import { Highlighter } from '../highlight/Highlighter';
 import { version } from '../version';
 import type { R3FDOM } from '../types';
 
 // ---------------------------------------------------------------------------
-// ThreeDomBridge Props
+// ThreeDom Props
 // ---------------------------------------------------------------------------
 
-export interface ThreeDomBridgeProps {
+export interface ThreeDomProps {
   /**
    * CSS selector or HTMLElement for the mirror DOM root.
    * Default: "#three-dom-root"
@@ -58,6 +60,24 @@ export interface ThreeDomBridgeProps {
    * Default: true
    */
   enabled?: boolean;
+
+  /**
+   * Whether to show highlight wireframes around selected objects.
+   * Default: true
+   */
+  highlight?: boolean;
+
+  /**
+   * Highlight wireframe color (any CSS color string).
+   * Default: '#00ff88'
+   */
+  highlightColor?: string;
+
+  /**
+   * Whether to show a label above highlighted objects.
+   * Default: true
+   */
+  highlightLabel?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +86,8 @@ export interface ThreeDomBridgeProps {
 
 let _store: ObjectStore | null = null;
 let _mirror: DomMirror | null = null;
+let _selectionManager: SelectionManager | null = null;
+let _highlighter: Highlighter | null = null;
 
 /** Access the current ObjectStore (for use by other core modules). */
 export function getStore(): ObjectStore | null {
@@ -75,6 +97,16 @@ export function getStore(): ObjectStore | null {
 /** Access the current DomMirror (for use by other core modules). */
 export function getMirror(): DomMirror | null {
   return _mirror;
+}
+
+/** Access the current SelectionManager. */
+export function getSelectionManager(): SelectionManager | null {
+  return _selectionManager;
+}
+
+/** Access the current Highlighter. */
+export function getHighlighter(): Highlighter | null {
+  return _highlighter;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +151,15 @@ function exposeGlobalAPI(store: ObjectStore): void {
       pointerMiss3D();
     },
 
+    // Selection / highlight
+    select: (idOrUuid: string) => {
+      const obj = store.getObject3D(idOrUuid);
+      if (obj && _selectionManager) _selectionManager.select(obj);
+    },
+    clearSelection: () => {
+      _selectionManager?.clearSelection();
+    },
+
     // Raw access
     getObject3D: (idOrUuid: string) => store.getObject3D(idOrUuid),
 
@@ -133,7 +174,7 @@ function removeGlobalAPI(): void {
 }
 
 // ---------------------------------------------------------------------------
-// ThreeDomBridge Component
+// ThreeDom Component
 // ---------------------------------------------------------------------------
 
 /**
@@ -143,7 +184,7 @@ function removeGlobalAPI(): void {
  * @example
  * ```tsx
  * <Canvas>
- *   <ThreeDomBridge root="#three-dom-root" />
+ *   <ThreeDom root="#three-dom-root" />
  *   <mesh userData={{ testId: "my-mesh" }}>
  *     <boxGeometry />
  *     <meshStandardMaterial />
@@ -151,14 +192,17 @@ function removeGlobalAPI(): void {
  * </Canvas>
  * ```
  */
-export function ThreeDomBridge({
+export function ThreeDom({
   root = '#three-dom-root',
   batchSize = 500,
   timeBudgetMs = 0.5,
   maxDomNodes = 2000,
   initialDepth = 3,
   enabled = true,
-}: ThreeDomBridgeProps = {}) {
+  highlight: highlightEnabled = true,
+  highlightColor = '#00ff88',
+  highlightLabel = true,
+}: ThreeDomProps = {}) {
   const scene = useThree((s) => s.scene);
   const camera = useThree((s) => s.camera);
   const gl = useThree((s) => s.gl);
@@ -207,6 +251,20 @@ export function ThreeDomBridge({
     // Set up interaction state (camera/renderer/size for projection)
     setInteractionState(store, camera, gl, size);
 
+    // Set up selection manager and highlighter
+    const selectionManager = new SelectionManager();
+    _selectionManager = selectionManager;
+
+    let highlighter: Highlighter | null = null;
+    if (highlightEnabled) {
+      highlighter = new Highlighter({
+        color: highlightColor,
+        showLabel: highlightLabel,
+      });
+      highlighter.attach(scene, selectionManager);
+      _highlighter = highlighter;
+    }
+
     // Expose global API
     exposeGlobalAPI(store);
 
@@ -219,12 +277,16 @@ export function ThreeDomBridge({
       unpatch();
       removeGlobalAPI();
       clearInteractionState();
+      highlighter?.dispose();
+      selectionManager.dispose();
       mirror.dispose();
       store.dispose();
       _store = null;
       _mirror = null;
+      _selectionManager = null;
+      _highlighter = null;
     };
-  }, [scene, camera, gl, size, enabled, root, maxDomNodes, initialDepth]);
+  }, [scene, camera, gl, size, enabled, root, maxDomNodes, initialDepth, highlightEnabled, highlightColor, highlightLabel]);
 
   // -----------------------------------------------------------------------
   // Per-frame sync: Layer 3 (priority) + Layer 2 (amortized batch)
@@ -271,6 +333,9 @@ export function ThreeDomBridge({
       // Advance cursor, wrap around when we've covered the full list
       cursorRef.current = end >= objects.length ? 0 : end;
     }
+
+    // Update highlight visuals (follows moving selected objects)
+    _highlighter?.update();
   });
 
   // This component renders nothing — it's a pure side-effect bridge

@@ -161,6 +161,11 @@ export interface R3FDOM {
   /** Click empty space to trigger onPointerMissed */
   pointerMiss(): void;
 
+  /** Select an object (shows highlight wireframe in scene) */
+  select(idOrUuid: string): void;
+  /** Clear selection */
+  clearSelection(): void;
+
   /** Raw Three.js object access (for advanced debugging) */
   getObject3D(idOrUuid: string): Object3D | null;
 

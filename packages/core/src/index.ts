@@ -49,11 +49,13 @@ export { computeAttributes, applyAttributes, MANAGED_ATTRIBUTES } from './mirror
 // ---------------------------------------------------------------------------
 
 export {
-  ThreeDomBridge,
+  ThreeDom,
   getStore,
   getMirror,
-  type ThreeDomBridgeProps,
-} from './bridge/ThreeDomBridge';
+  getSelectionManager,
+  getHighlighter,
+  type ThreeDomProps,
+} from './bridge/ThreeDom';
 export { patchObject3D, restoreObject3D, isPatched } from './bridge/patchObject3D';
 
 // ---------------------------------------------------------------------------
@@ -131,3 +133,16 @@ export {
 // ---------------------------------------------------------------------------
 
 export { resolveObject } from './interactions/resolve';
+
+// ---------------------------------------------------------------------------
+// Highlight / selection
+// ---------------------------------------------------------------------------
+
+export {
+  Highlighter,
+  type HighlighterOptions,
+} from './highlight/Highlighter';
+export {
+  SelectionManager,
+  type SelectionListener,
+} from './highlight/SelectionManager';
