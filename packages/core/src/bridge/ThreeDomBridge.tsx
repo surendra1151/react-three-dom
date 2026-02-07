@@ -5,6 +5,12 @@ import { DomMirror } from '../mirror/DomMirror';
 import { ensureCustomElements } from '../mirror/CustomElements';
 import { patchObject3D } from './patchObject3D';
 import { createSnapshot } from '../snapshot/snapshot';
+import { click3D, doubleClick3D, contextMenu3D } from '../interactions/click';
+import { hover3D } from '../interactions/hover';
+import { drag3D } from '../interactions/drag';
+import { wheel3D } from '../interactions/wheel';
+import { pointerMiss3D } from '../interactions/pointerMiss';
+import { setInteractionState, clearInteractionState } from '../interactions/resolve';
 import { version } from '../version';
 import type { R3FDOM } from '../types';
 
@@ -89,15 +95,28 @@ function exposeGlobalAPI(store: ObjectStore): void {
     // Tier 2 inspection
     inspect: (idOrUuid: string) => store.inspect(idOrUuid),
 
-    // Interactions (stubs — will be wired in interactions step)
-    click: (_idOrUuid: string) => {
-      console.warn('[react-three-dom] click() not yet implemented. Coming in Phase 2.');
+    // Interactions
+    click: (idOrUuid: string) => {
+      click3D(idOrUuid);
     },
-    hover: (_idOrUuid: string) => {
-      console.warn('[react-three-dom] hover() not yet implemented. Coming in Phase 2.');
+    doubleClick: (idOrUuid: string) => {
+      doubleClick3D(idOrUuid);
     },
-    drag: (_idOrUuid: string, _delta: { x: number; y: number; z: number }) => {
-      console.warn('[react-three-dom] drag() not yet implemented. Coming in Phase 2.');
+    contextMenu: (idOrUuid: string) => {
+      contextMenu3D(idOrUuid);
+    },
+    hover: (idOrUuid: string) => {
+      hover3D(idOrUuid);
+    },
+    drag: (idOrUuid: string, delta: { x: number; y: number; z: number }) => {
+      // drag3D is async but the global API is sync — fire and forget
+      void drag3D(idOrUuid, delta);
+    },
+    wheel: (idOrUuid: string, options?: { deltaY?: number; deltaX?: number }) => {
+      wheel3D(idOrUuid, options);
+    },
+    pointerMiss: () => {
+      pointerMiss3D();
     },
 
     // Raw access
@@ -141,6 +160,9 @@ export function ThreeDomBridge({
   enabled = true,
 }: ThreeDomBridgeProps = {}) {
   const scene = useThree((s) => s.scene);
+  const camera = useThree((s) => s.camera);
+  const gl = useThree((s) => s.gl);
+  const size = useThree((s) => s.size);
   const cursorRef = useRef(0);
 
   // -----------------------------------------------------------------------
@@ -182,6 +204,9 @@ export function ThreeDomBridge({
     // Patch Object3D for event-driven structural sync
     const unpatch = patchObject3D(store, mirror);
 
+    // Set up interaction state (camera/renderer/size for projection)
+    setInteractionState(store, camera, gl, size);
+
     // Expose global API
     exposeGlobalAPI(store);
 
@@ -193,12 +218,13 @@ export function ThreeDomBridge({
     return () => {
       unpatch();
       removeGlobalAPI();
+      clearInteractionState();
       mirror.dispose();
       store.dispose();
       _store = null;
       _mirror = null;
     };
-  }, [scene, enabled, root, maxDomNodes, initialDepth]);
+  }, [scene, camera, gl, size, enabled, root, maxDomNodes, initialDepth]);
 
   // -----------------------------------------------------------------------
   // Per-frame sync: Layer 3 (priority) + Layer 2 (amortized batch)
@@ -206,6 +232,9 @@ export function ThreeDomBridge({
 
   useFrame(() => {
     if (!enabled || !_store || !_mirror) return;
+
+    // Keep interaction state fresh (camera may have moved via controls)
+    setInteractionState(_store, camera, gl, size);
 
     const store = _store;
     const mirror = _mirror;

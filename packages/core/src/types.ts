@@ -148,10 +148,18 @@ export interface R3FDOM {
 
   /** Deterministic click on a 3D object */
   click(idOrUuid: string): void;
+  /** Deterministic double-click on a 3D object */
+  doubleClick(idOrUuid: string): void;
+  /** Deterministic right-click / context menu on a 3D object */
+  contextMenu(idOrUuid: string): void;
   /** Deterministic hover on a 3D object */
   hover(idOrUuid: string): void;
   /** Deterministic drag on a 3D object */
   drag(idOrUuid: string, delta: { x: number; y: number; z: number }): void;
+  /** Dispatch a wheel/scroll event on a 3D object */
+  wheel(idOrUuid: string, options?: { deltaY?: number; deltaX?: number }): void;
+  /** Click empty space to trigger onPointerMissed */
+  pointerMiss(): void;
 
   /** Raw Three.js object access (for advanced debugging) */
   getObject3D(idOrUuid: string): Object3D | null;
