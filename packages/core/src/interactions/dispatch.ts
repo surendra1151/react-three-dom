@@ -78,25 +78,27 @@ export function dispatchClick(
   canvas: HTMLCanvasElement,
   point: ScreenPoint,
 ): void {
-  const pointerId = allocPointerId();
+  withSafePointerCapture(() => {
+    const pointerId = allocPointerId();
 
-  canvas.dispatchEvent(
-    new PointerEvent('pointerdown', makePointerInit(canvas, point, pointerId)),
-  );
-  canvas.dispatchEvent(
-    new PointerEvent(
-      'pointerup',
-      makePointerInit(canvas, point, pointerId, { buttons: 0, pressure: 0 }),
-    ),
-  );
-  canvas.dispatchEvent(
-    new MouseEvent('click', {
-      bubbles: true,
-      cancelable: true,
-      ...toClientCoords(canvas, point),
-      button: 0,
-    }),
-  );
+    canvas.dispatchEvent(
+      new PointerEvent('pointerdown', makePointerInit(canvas, point, pointerId)),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent(
+        'pointerup',
+        makePointerInit(canvas, point, pointerId, { buttons: 0, pressure: 0 }),
+      ),
+    );
+    canvas.dispatchEvent(
+      new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        ...toClientCoords(canvas, point),
+        button: 0,
+      }),
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -157,9 +159,11 @@ export async function dispatchDrag(
   const pointerId = allocPointerId();
 
   // Pointer down at start
-  canvas.dispatchEvent(
-    new PointerEvent('pointerdown', makePointerInit(canvas, start, pointerId)),
-  );
+  withSafePointerCapture(() => {
+    canvas.dispatchEvent(
+      new PointerEvent('pointerdown', makePointerInit(canvas, start, pointerId)),
+    );
+  });
 
   // Interpolate intermediate moves
   for (let i = 1; i <= steps; i++) {
@@ -182,12 +186,14 @@ export async function dispatchDrag(
   }
 
   // Pointer up at end
-  canvas.dispatchEvent(
-    new PointerEvent(
-      'pointerup',
-      makePointerInit(canvas, end, pointerId, { buttons: 0, pressure: 0 }),
-    ),
-  );
+  withSafePointerCapture(() => {
+    canvas.dispatchEvent(
+      new PointerEvent(
+        'pointerup',
+        makePointerInit(canvas, end, pointerId, { buttons: 0, pressure: 0 }),
+      ),
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -205,59 +211,61 @@ export function dispatchDoubleClick(
   canvas: HTMLCanvasElement,
   point: ScreenPoint,
 ): void {
-  const pointerId = allocPointerId();
-  const coords = toClientCoords(canvas, point);
+  withSafePointerCapture(() => {
+    const pointerId = allocPointerId();
+    const coords = toClientCoords(canvas, point);
 
-  // First click
-  canvas.dispatchEvent(
-    new PointerEvent('pointerdown', makePointerInit(canvas, point, pointerId)),
-  );
-  canvas.dispatchEvent(
-    new PointerEvent(
-      'pointerup',
-      makePointerInit(canvas, point, pointerId, { buttons: 0, pressure: 0 }),
-    ),
-  );
-  canvas.dispatchEvent(
-    new MouseEvent('click', {
-      bubbles: true,
-      cancelable: true,
-      ...coords,
-      button: 0,
-      detail: 1,
-    }),
-  );
+    // First click
+    canvas.dispatchEvent(
+      new PointerEvent('pointerdown', makePointerInit(canvas, point, pointerId)),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent(
+        'pointerup',
+        makePointerInit(canvas, point, pointerId, { buttons: 0, pressure: 0 }),
+      ),
+    );
+    canvas.dispatchEvent(
+      new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        ...coords,
+        button: 0,
+        detail: 1,
+      }),
+    );
 
-  // Second click
-  canvas.dispatchEvent(
-    new PointerEvent('pointerdown', makePointerInit(canvas, point, pointerId)),
-  );
-  canvas.dispatchEvent(
-    new PointerEvent(
-      'pointerup',
-      makePointerInit(canvas, point, pointerId, { buttons: 0, pressure: 0 }),
-    ),
-  );
-  canvas.dispatchEvent(
-    new MouseEvent('click', {
-      bubbles: true,
-      cancelable: true,
-      ...coords,
-      button: 0,
-      detail: 2,
-    }),
-  );
+    // Second click
+    canvas.dispatchEvent(
+      new PointerEvent('pointerdown', makePointerInit(canvas, point, pointerId)),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent(
+        'pointerup',
+        makePointerInit(canvas, point, pointerId, { buttons: 0, pressure: 0 }),
+      ),
+    );
+    canvas.dispatchEvent(
+      new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        ...coords,
+        button: 0,
+        detail: 2,
+      }),
+    );
 
-  // dblclick
-  canvas.dispatchEvent(
-    new MouseEvent('dblclick', {
-      bubbles: true,
-      cancelable: true,
-      ...coords,
-      button: 0,
-      detail: 2,
-    }),
-  );
+    // dblclick
+    canvas.dispatchEvent(
+      new MouseEvent('dblclick', {
+        bubbles: true,
+        cancelable: true,
+        ...coords,
+        button: 0,
+        detail: 2,
+      }),
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -275,32 +283,34 @@ export function dispatchContextMenu(
   canvas: HTMLCanvasElement,
   point: ScreenPoint,
 ): void {
-  const pointerId = allocPointerId();
+  withSafePointerCapture(() => {
+    const pointerId = allocPointerId();
 
-  canvas.dispatchEvent(
-    new PointerEvent(
-      'pointerdown',
-      makePointerInit(canvas, point, pointerId, { button: 2, buttons: 2 }),
-    ),
-  );
-  canvas.dispatchEvent(
-    new PointerEvent(
-      'pointerup',
-      makePointerInit(canvas, point, pointerId, {
+    canvas.dispatchEvent(
+      new PointerEvent(
+        'pointerdown',
+        makePointerInit(canvas, point, pointerId, { button: 2, buttons: 2 }),
+      ),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent(
+        'pointerup',
+        makePointerInit(canvas, point, pointerId, {
+          button: 2,
+          buttons: 0,
+          pressure: 0,
+        }),
+      ),
+    );
+    canvas.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        ...toClientCoords(canvas, point),
         button: 2,
-        buttons: 0,
-        pressure: 0,
       }),
-    ),
-  );
-  canvas.dispatchEvent(
-    new MouseEvent('contextmenu', {
-      bubbles: true,
-      cancelable: true,
-      ...toClientCoords(canvas, point),
-      button: 2,
-    }),
-  );
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +398,34 @@ export function dispatchUnhover(canvas: HTMLCanvasElement): void {
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
+
+/**
+ * Guard against `releasePointerCapture` throwing when no pointer capture
+ * is active. Libraries like @react-three/drei register global pointerup
+ * handlers that call `releasePointerCapture`, which throws a `NotFoundError`
+ * when the pointer was never captured (as with our synthetic events).
+ *
+ * This wrapper patches `Element.prototype.releasePointerCapture` for the
+ * duration of `fn()` so that the `NotFoundError` is silently swallowed.
+ */
+function withSafePointerCapture<T>(fn: () => T): T {
+  const original = Element.prototype.releasePointerCapture;
+  Element.prototype.releasePointerCapture = function safeRelease(
+    this: Element,
+    pointerId: number,
+  ) {
+    try {
+      original.call(this, pointerId);
+    } catch {
+      // Swallow NotFoundError — no active pointer with the given id
+    }
+  };
+  try {
+    return fn();
+  } finally {
+    Element.prototype.releasePointerCapture = original;
+  }
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

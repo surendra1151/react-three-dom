@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e:pw": "PLAYWRIGHT_BROWSERS_PATH=0 playwright test --config playwright.config.ts",
+    "test:e2e:cy": "cypress run --config-file cypress.config.ts"
   },
   "dependencies": {
     "react": "^18",
@@ -23,6 +25,10 @@
     "@types/three": "^0.171",
     "@vitejs/plugin-react": "^4",
     "vite": "^6",
-    "typescript": "^5.7"
+    "typescript": "^5.7",
+    "@playwright/test": "^1",
+    "cypress": "^13",
+    "@react-three-dom/playwright": "workspace:*",
+    "@react-three-dom/cypress": "workspace:*"
   }
 }
