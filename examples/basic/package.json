@@ -14,7 +14,8 @@
     "three": "^0.171",
     "@react-three/fiber": "^8",
     "@react-three/drei": "^9",
-    "@react-three-dom/core": "workspace:*"
+    "@react-three-dom/core": "workspace:*",
+    "@react-three-dom/inspector": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18",

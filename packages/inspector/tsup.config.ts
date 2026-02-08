@@ -8,4 +8,7 @@ export default defineConfig({
   sourcemap: true,
   external: ['react', 'react-dom', '@react-three-dom/core'],
   treeshake: true,
+  esbuildOptions(options) {
+    options.jsx = 'automatic';
+  },
 });

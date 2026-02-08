@@ -236,6 +236,11 @@ export class ObjectStore {
    * Populates Tier 1 metadata and all indexes.
    */
   register(obj: Object3D): ObjectMetadata {
+    // Skip internal highlight/label helpers created by Highlighter
+    if (obj.userData?.__r3fdom_internal) {
+      return extractMetadata(obj); // Return metadata but don't store it
+    }
+
     // Skip if already registered
     const existing = this._metaByObject.get(obj);
     if (existing) return existing;

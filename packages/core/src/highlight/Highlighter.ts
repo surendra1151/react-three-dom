@@ -1,334 +1,515 @@
 import {
-  BoxHelper,
-  Color,
   Object3D,
   Box3,
-  Sprite,
-  SpriteMaterial,
-  CanvasTexture,
   Vector3,
+  Camera,
+  WebGLRenderer,
 } from 'three';
 import type { SelectionManager } from './SelectionManager';
 
 // ---------------------------------------------------------------------------
 // Highlighter
 //
-// Renders a BoxHelper wireframe outline around selected objects in the scene.
-// Subscribes to the SelectionManager and automatically updates when the
-// selection changes. Supports customizable highlight color and can
-// optionally display a label above the selected object.
+// Renders DevTools-style 2D overlay highlights over 3D objects by projecting
+// their world-space bounding boxes onto screen coordinates. Matches the
+// Chrome DevTools visual style:
+//   - Blue semi-transparent overlay for content area
+//   - Tooltip showing element tag name + dimensions
+//   - Hover highlight (temporary) vs selected highlight (persistent)
+//   - Parent selection cascades to all children
 // ---------------------------------------------------------------------------
 
-/** Options for the Highlighter. */
+/** Chrome DevTools highlight colors */
+const COLORS = {
+  /** Content area — same blue as Chrome DevTools element highlight */
+  content: 'rgba(111, 168, 220, 0.66)',
+  /** Slightly dimmer for children of a selected parent */
+  contentChild: 'rgba(111, 168, 220, 0.33)',
+  /** Hover highlight — lighter blue */
+  hover: 'rgba(111, 168, 220, 0.4)',
+  /** Tooltip background */
+  tooltipBg: 'rgba(36, 36, 36, 0.9)',
+  /** Tooltip text */
+  tooltipText: '#fff',
+  /** Tooltip tag color */
+  tooltipTag: '#e776e0',
+  /** Tooltip dimensions color */
+  tooltipDim: '#c5c5c5',
+  /** Border for selected elements */
+  border: 'rgba(111, 168, 220, 0.9)',
+} as const;
+
 export interface HighlighterOptions {
-  /** Highlight wireframe color. Default: '#00ff88' */
-  color?: string;
-  /** Whether to show a label above selected objects. Default: true */
-  showLabel?: boolean;
-  /** Label font size in canvas pixels. Default: 48 */
-  labelFontSize?: number;
-  /** Label background color. Default: 'rgba(0, 0, 0, 0.7)' */
-  labelBackground?: string;
-  /** Label text color. Default: '#00ff88' */
-  labelColor?: string;
+  /** Whether to show a tooltip above highlighted objects. Default: true */
+  showTooltip?: boolean;
 }
 
-/** Internal state for a single highlighted object. */
-interface HighlightEntry {
+/** A 2D rectangle in screen pixels */
+interface ScreenRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: project 3D bounding box to 2D screen rect
+// ---------------------------------------------------------------------------
+
+const _box = /* @__PURE__ */ new Box3();
+const _v = /* @__PURE__ */ new Vector3();
+const _corners: Vector3[] = Array.from({ length: 8 }, () => new Vector3());
+
+function projectBoundsToScreen(
+  obj: Object3D,
+  camera: Camera,
+  canvas: HTMLCanvasElement,
+): ScreenRect | null {
+  _box.setFromObject(obj);
+  if (_box.isEmpty()) return null;
+
+  const { min, max } = _box;
+
+  // Get all 8 corners of the AABB
+  _corners[0].set(min.x, min.y, min.z);
+  _corners[1].set(min.x, min.y, max.z);
+  _corners[2].set(min.x, max.y, min.z);
+  _corners[3].set(min.x, max.y, max.z);
+  _corners[4].set(max.x, min.y, min.z);
+  _corners[5].set(max.x, min.y, max.z);
+  _corners[6].set(max.x, max.y, min.z);
+  _corners[7].set(max.x, max.y, max.z);
+
+  const rect = canvas.getBoundingClientRect();
+  let screenMinX = Infinity;
+  let screenMinY = Infinity;
+  let screenMaxX = -Infinity;
+  let screenMaxY = -Infinity;
+  let allBehind = true;
+
+  for (const corner of _corners) {
+    _v.copy(corner).project(camera);
+
+    // Check if point is in front of camera (z < 1 in NDC)
+    if (_v.z < 1) allBehind = false;
+
+    // Convert NDC to screen pixels
+    const sx = ((_v.x + 1) / 2) * rect.width;
+    const sy = ((1 - _v.y) / 2) * rect.height;
+
+    screenMinX = Math.min(screenMinX, sx);
+    screenMinY = Math.min(screenMinY, sy);
+    screenMaxX = Math.max(screenMaxX, sx);
+    screenMaxY = Math.max(screenMaxY, sy);
+  }
+
+  if (allBehind) return null;
+
+  // Clamp to canvas bounds
+  screenMinX = Math.max(0, screenMinX);
+  screenMinY = Math.max(0, screenMinY);
+  screenMaxX = Math.min(rect.width, screenMaxX);
+  screenMaxY = Math.min(rect.height, screenMaxY);
+
+  const width = screenMaxX - screenMinX;
+  const height = screenMaxY - screenMinY;
+
+  if (width < 1 || height < 1) return null;
+
+  return {
+    left: rect.left + screenMinX,
+    top: rect.top + screenMinY,
+    width,
+    height,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helper: get a display label for an object (like DevTools tag name)
+// ---------------------------------------------------------------------------
+
+function getObjectLabel(obj: Object3D): string {
+  const tag = `three-${obj.type.toLowerCase()}`;
+  const parts: string[] = [tag];
+
+  if (obj.name) {
+    parts.push(`.${obj.name}`);
+  }
+
+  const testId = obj.userData?.testId;
+  if (testId) {
+    parts.push(`[testId="${testId}"]`);
+  }
+
+  return parts.join('');
+}
+
+function getObjectDimensions(obj: Object3D): string {
+  _box.setFromObject(obj);
+  if (_box.isEmpty()) return '';
+  const size = _box.getSize(new Vector3());
+  return `${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Overlay element management
+// ---------------------------------------------------------------------------
+
+interface OverlayEntry {
+  /** The container div for the highlight overlay */
+  overlayEl: HTMLDivElement;
+  /** The tooltip element */
+  tooltipEl: HTMLDivElement;
+  /** Target object being highlighted */
   target: Object3D;
-  boxHelper: BoxHelper;
-  label?: Sprite;
-  labelTexture?: CanvasTexture;
+  /** Whether this is a child-of-parent highlight (dimmer) */
+  isChild: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Label texture generation
-// ---------------------------------------------------------------------------
-
-function createLabelTexture(
-  text: string,
-  fontSize: number,
-  bgColor: string,
-  textColor: string,
-): CanvasTexture {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d')!;
-
-  // Measure text
-  ctx.font = `bold ${fontSize}px monospace`;
-  const metrics = ctx.measureText(text);
-  const textWidth = metrics.width;
-  const padding = fontSize * 0.4;
-
-  // Size the canvas (power-of-two friendly isn't required for sprites)
-  canvas.width = textWidth + padding * 2;
-  canvas.height = fontSize + padding * 2;
-
-  // Background
-  ctx.fillStyle = bgColor;
-  const radius = fontSize * 0.25;
-  roundRect(ctx, 0, 0, canvas.width, canvas.height, radius);
-  ctx.fill();
-
-  // Text
-  ctx.font = `bold ${fontSize}px monospace`;
-  ctx.fillStyle = textColor;
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'center';
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-
-  const texture = new CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  return texture;
+function createOverlayElement(color: string, showBorder: boolean): HTMLDivElement {
+  const el = document.createElement('div');
+  el.style.cssText = `
+    position: fixed;
+    pointer-events: none;
+    z-index: 99998;
+    background: ${color};
+    ${showBorder ? `border: 1px solid ${COLORS.border};` : ''}
+    transition: all 0.05s ease-out;
+    box-sizing: border-box;
+  `;
+  return el;
 }
 
-function roundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number,
-): void {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
+function createTooltipElement(): HTMLDivElement {
+  const el = document.createElement('div');
+  el.style.cssText = `
+    position: fixed;
+    pointer-events: none;
+    z-index: 99999;
+    background: ${COLORS.tooltipBg};
+    color: ${COLORS.tooltipText};
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 3px;
+    white-space: nowrap;
+    line-height: 1.4;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  `;
+  return el;
+}
+
+function positionOverlay(entry: OverlayEntry, rect: ScreenRect): void {
+  const { overlayEl, tooltipEl } = entry;
+  overlayEl.style.left = `${rect.left}px`;
+  overlayEl.style.top = `${rect.top}px`;
+  overlayEl.style.width = `${rect.width}px`;
+  overlayEl.style.height = `${rect.height}px`;
+  overlayEl.style.display = 'block';
+
+  // Position tooltip above the overlay
+  tooltipEl.style.left = `${rect.left}px`;
+  tooltipEl.style.top = `${Math.max(0, rect.top - 28)}px`;
+  tooltipEl.style.display = 'block';
+}
+
+function hideOverlay(entry: OverlayEntry): void {
+  entry.overlayEl.style.display = 'none';
+  entry.tooltipEl.style.display = 'none';
 }
 
 // ---------------------------------------------------------------------------
 // Highlighter class
 // ---------------------------------------------------------------------------
 
-const _box = /* @__PURE__ */ new Box3();
-const _center = /* @__PURE__ */ new Vector3();
-
 export class Highlighter {
-  private _entries: Map<Object3D, HighlightEntry> = new Map();
-  private _scene: Object3D | null = null;
+  /** Selected object overlays (persistent until deselected) */
+  private _selectedEntries: Map<Object3D, OverlayEntry> = new Map();
+  /** Hover overlay (temporary, single object at a time) */
+  private _hoverEntries: Map<Object3D, OverlayEntry> = new Map();
+
+  private _camera: Camera | null = null;
+  private _renderer: WebGLRenderer | null = null;
   private _unsubscribe: (() => void) | null = null;
-  private _color: Color;
-  private _showLabel: boolean;
-  private _labelFontSize: number;
-  private _labelBackground: string;
-  private _labelColor: string;
+  private _showTooltip: boolean;
+
+  /** DevTools hover polling interval */
+  private _hoverPollId: ReturnType<typeof setInterval> | null = null;
+  private _lastHoveredElement: HTMLElement | null = null;
+
+  /** Store reference for resolving objects */
+  private _store: { getObject3D(uuid: string): Object3D | null } | null = null;
 
   constructor(options: HighlighterOptions = {}) {
-    this._color = new Color(options.color ?? '#00ff88');
-    this._showLabel = options.showLabel ?? true;
-    this._labelFontSize = options.labelFontSize ?? 48;
-    this._labelBackground = options.labelBackground ?? 'rgba(0, 0, 0, 0.7)';
-    this._labelColor = options.labelColor ?? '#00ff88';
+    this._showTooltip = options.showTooltip ?? true;
   }
 
   // -----------------------------------------------------------------------
   // Lifecycle
   // -----------------------------------------------------------------------
 
-  /**
-   * Attach the highlighter to a scene and selection manager.
-   * Starts listening for selection changes.
-   */
-  attach(scene: Object3D, selectionManager: SelectionManager): void {
+  attach(
+    _scene: Object3D,
+    selectionManager: SelectionManager,
+    camera: Camera,
+    renderer: WebGLRenderer,
+    store: { getObject3D(uuid: string): Object3D | null },
+  ): void {
     this.detach();
-    this._scene = scene;
+    // scene parameter kept for API compatibility but not used for 2D overlays
+    void _scene;
+    this._camera = camera;
+    this._renderer = renderer;
+    this._store = store;
 
     // Subscribe to selection changes
     this._unsubscribe = selectionManager.subscribe((selected) => {
-      this._syncHighlights(selected);
+      this._syncSelectedHighlights(selected);
     });
 
     // Apply initial selection
-    this._syncHighlights([...selectionManager.getSelected()]);
+    this._syncSelectedHighlights([...selectionManager.getSelected()]);
+
+    // Start polling for DevTools hover
+    this._startHoverPolling();
   }
 
-  /** Detach from the scene and clean up all highlights. */
   detach(): void {
     if (this._unsubscribe) {
       this._unsubscribe();
       this._unsubscribe = null;
     }
-    this._removeAllHighlights();
-    this._scene = null;
+    this._stopHoverPolling();
+    this._clearAllOverlays(this._selectedEntries);
+    this._clearAllOverlays(this._hoverEntries);
+    this._camera = null;
+    this._renderer = null;
+    this._store = null;
   }
 
   // -----------------------------------------------------------------------
-  // Per-frame update (call from useFrame)
+  // Per-frame update — reposition all overlays to follow camera/objects
   // -----------------------------------------------------------------------
 
-  /**
-   * Update all active highlights. Call once per frame to keep
-   * BoxHelpers in sync with moving objects.
-   */
   update(): void {
-    for (const entry of this._entries.values()) {
-      // Update BoxHelper to follow the target
-      entry.boxHelper.update();
+    if (!this._camera || !this._renderer) return;
+    const canvas = this._renderer.domElement;
 
-      // Update label position above the object
-      if (entry.label) {
-        _box.setFromObject(entry.target);
-        if (!_box.isEmpty()) {
-          _box.getCenter(_center);
-          const size = _box.getSize(new Vector3());
-          entry.label.position.set(
-            _center.x,
-            _center.y + size.y / 2 + size.y * 0.15,
-            _center.z,
-          );
-        }
+    // Update selected overlays
+    for (const entry of this._selectedEntries.values()) {
+      const rect = projectBoundsToScreen(entry.target, this._camera, canvas);
+      if (rect) {
+        positionOverlay(entry, rect);
+      } else {
+        hideOverlay(entry);
+      }
+    }
+
+    // Update hover overlays
+    for (const entry of this._hoverEntries.values()) {
+      const rect = projectBoundsToScreen(entry.target, this._camera, canvas);
+      if (rect) {
+        positionOverlay(entry, rect);
+      } else {
+        hideOverlay(entry);
       }
     }
   }
 
   // -----------------------------------------------------------------------
-  // Manual highlight API (for programmatic use)
+  // Public API
   // -----------------------------------------------------------------------
 
-  /** Highlight a specific object (adds to existing highlights). */
   highlight(obj: Object3D): void {
-    if (this._entries.has(obj)) return;
-    this._addHighlight(obj);
+    this._addSelectedHighlight(obj, false);
   }
 
-  /** Remove highlight from a specific object. */
   unhighlight(obj: Object3D): void {
-    this._removeHighlight(obj);
+    this._removeOverlay(obj, this._selectedEntries);
   }
 
-  /** Clear all highlights. */
   clearAll(): void {
-    this._removeAllHighlights();
+    this._clearAllOverlays(this._selectedEntries);
+    this._clearAllOverlays(this._hoverEntries);
   }
 
-  /** Check if an object is currently highlighted. */
   isHighlighted(obj: Object3D): boolean {
-    return this._entries.has(obj);
+    return this._selectedEntries.has(obj);
+  }
+
+  /** Show a temporary hover highlight for an object and its children */
+  showHoverHighlight(obj: Object3D): void {
+    this._clearAllOverlays(this._hoverEntries);
+    this._addHoverHighlightRecursive(obj);
+  }
+
+  /** Clear the hover highlight */
+  clearHoverHighlight(): void {
+    this._clearAllOverlays(this._hoverEntries);
+    this._lastHoveredElement = null;
   }
 
   // -----------------------------------------------------------------------
-  // Internal — sync highlights with selection state
+  // Internal: selection highlights
   // -----------------------------------------------------------------------
 
-  private _syncHighlights(selected: Object3D[]): void {
-    const selectedSet = new Set(selected);
+  private _syncSelectedHighlights(selected: Object3D[]): void {
+    // Collect all objects that should be highlighted
+    const targetSet = new Set<Object3D>();
+    const primarySet = new Set<Object3D>(selected);
 
-    // Remove highlights for deselected objects
-    for (const [obj] of this._entries) {
-      if (!selectedSet.has(obj)) {
-        this._removeHighlight(obj);
-      }
-    }
-
-    // Add highlights for newly selected objects
     for (const obj of selected) {
-      if (!this._entries.has(obj)) {
-        this._addHighlight(obj);
+      targetSet.add(obj);
+      // If the selected object has children, cascade highlights
+      obj.traverse((child) => {
+        targetSet.add(child);
+      });
+    }
+
+    // Remove overlays for objects no longer in the target set
+    for (const [obj] of this._selectedEntries) {
+      if (!targetSet.has(obj)) {
+        this._removeOverlay(obj, this._selectedEntries);
+      }
+    }
+
+    // Add overlays for newly targeted objects
+    for (const obj of targetSet) {
+      if (obj.userData?.__r3fdom_internal) continue;
+      if (!this._selectedEntries.has(obj)) {
+        const isChild = !primarySet.has(obj);
+        this._addSelectedHighlight(obj, isChild);
       }
     }
   }
 
-  private _addHighlight(obj: Object3D): void {
-    if (!this._scene) return;
+  private _addSelectedHighlight(obj: Object3D, isChild: boolean): void {
+    if (this._selectedEntries.has(obj)) return;
 
-    // Create BoxHelper
-    const boxHelper = new BoxHelper(obj, this._color);
-    boxHelper.name = `__r3fdom_highlight_${obj.uuid}`;
-    boxHelper.userData.__r3fdom_internal = true;
-    boxHelper.raycast = () => {}; // Make non-interactive
-    this._scene.add(boxHelper);
+    const color = isChild ? COLORS.contentChild : COLORS.content;
+    const overlayEl = createOverlayElement(color, !isChild);
+    const tooltipEl = createTooltipElement();
 
-    const entry: HighlightEntry = { target: obj, boxHelper };
-
-    // Create label sprite
-    if (this._showLabel) {
-      const labelText = this._getLabelText(obj);
-      if (labelText) {
-        const texture = createLabelTexture(
-          labelText,
-          this._labelFontSize,
-          this._labelBackground,
-          this._labelColor,
-        );
-
-        const material = new SpriteMaterial({
-          map: texture,
-          depthTest: false,
-          depthWrite: false,
-          transparent: true,
-          sizeAttenuation: true,
-        });
-
-        const sprite = new Sprite(material);
-        sprite.name = `__r3fdom_label_${obj.uuid}`;
-        sprite.userData.__r3fdom_internal = true;
-        sprite.raycast = () => {}; // Make non-interactive
-
-        // Scale sprite based on object size
-        _box.setFromObject(obj);
-        const objSize = _box.getSize(new Vector3());
-        const maxDim = Math.max(objSize.x, objSize.y, objSize.z, 0.5);
-        const aspect = texture.image.width / texture.image.height;
-        sprite.scale.set(maxDim * 0.6 * aspect, maxDim * 0.6, 1);
-
-        // Position above object
-        _box.getCenter(_center);
-        sprite.position.set(
-          _center.x,
-          _center.y + objSize.y / 2 + objSize.y * 0.15,
-          _center.z,
-        );
-
-        this._scene.add(sprite);
-        entry.label = sprite;
-        entry.labelTexture = texture;
-      }
+    // Only show tooltip for the primary (non-child) selection
+    if (isChild || !this._showTooltip) {
+      tooltipEl.style.display = 'none';
     }
 
-    this._entries.set(obj, entry);
+    // Set tooltip content
+    const label = getObjectLabel(obj);
+    const dims = getObjectDimensions(obj);
+    tooltipEl.innerHTML = `<span style="color:${COLORS.tooltipTag}">${label}</span>` +
+      (dims ? ` <span style="color:${COLORS.tooltipDim}">${dims}</span>` : '');
+
+    document.body.appendChild(overlayEl);
+    document.body.appendChild(tooltipEl);
+
+    const entry: OverlayEntry = { overlayEl, tooltipEl, target: obj, isChild };
+    this._selectedEntries.set(obj, entry);
   }
 
-  private _removeHighlight(obj: Object3D): void {
-    const entry = this._entries.get(obj);
+  // -----------------------------------------------------------------------
+  // Internal: hover highlights
+  // -----------------------------------------------------------------------
+
+  private _addHoverHighlightRecursive(obj: Object3D): void {
+    if (obj.userData?.__r3fdom_internal) return;
+
+    const overlayEl = createOverlayElement(COLORS.hover, false);
+    const tooltipEl = createTooltipElement();
+
+    // Tooltip only for the root hovered object
+    if (this._hoverEntries.size === 0 && this._showTooltip) {
+      const label = getObjectLabel(obj);
+      const dims = getObjectDimensions(obj);
+      tooltipEl.innerHTML = `<span style="color:${COLORS.tooltipTag}">${label}</span>` +
+        (dims ? ` <span style="color:${COLORS.tooltipDim}">${dims}</span>` : '');
+    } else {
+      tooltipEl.style.display = 'none';
+    }
+
+    document.body.appendChild(overlayEl);
+    document.body.appendChild(tooltipEl);
+
+    this._hoverEntries.set(obj, { overlayEl, tooltipEl, target: obj, isChild: false });
+
+    // Recurse into children
+    for (const child of obj.children) {
+      if (!child.userData?.__r3fdom_internal) {
+        this._addHoverHighlightRecursive(child);
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Internal: DevTools hover polling
+  // -----------------------------------------------------------------------
+
+  private _startHoverPolling(): void {
+    this._hoverPollId = setInterval(() => {
+      this._pollDevToolsHover();
+    }, 100);
+  }
+
+  private _stopHoverPolling(): void {
+    if (this._hoverPollId) {
+      clearInterval(this._hoverPollId);
+      this._hoverPollId = null;
+    }
+  }
+
+  private _pollDevToolsHover(): void {
+    if (!this._store) return;
+
+    try {
+      // Chrome DevTools exposes $0 for the currently selected element.
+      // We also check for a custom __r3fdom_hovered__ property that
+      // we set via a MutationObserver on the mirror root.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const hoveredEl = (globalThis as any).__r3fdom_hovered__ as HTMLElement | undefined;
+      if (hoveredEl === this._lastHoveredElement) return;
+      this._lastHoveredElement = hoveredEl ?? null;
+
+      if (!hoveredEl) {
+        this._clearAllOverlays(this._hoverEntries);
+        return;
+      }
+
+      const uuid = hoveredEl.getAttribute?.('data-uuid');
+      if (!uuid) {
+        this._clearAllOverlays(this._hoverEntries);
+        return;
+      }
+
+      const obj = this._store.getObject3D(uuid);
+      if (obj) {
+        this.showHoverHighlight(obj);
+      } else {
+        this._clearAllOverlays(this._hoverEntries);
+      }
+    } catch {
+      // Ignore errors from DevTools API
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Internal: overlay cleanup
+  // -----------------------------------------------------------------------
+
+  private _removeOverlay(obj: Object3D, map: Map<Object3D, OverlayEntry>): void {
+    const entry = map.get(obj);
     if (!entry) return;
-
-    // Remove BoxHelper from scene
-    if (entry.boxHelper.parent) {
-      entry.boxHelper.parent.remove(entry.boxHelper);
-    }
-    entry.boxHelper.geometry.dispose();
-    (entry.boxHelper.material as { dispose: () => void }).dispose();
-
-    // Remove label from scene
-    if (entry.label) {
-      if (entry.label.parent) {
-        entry.label.parent.remove(entry.label);
-      }
-      (entry.label.material as SpriteMaterial).dispose();
-      entry.labelTexture?.dispose();
-    }
-
-    this._entries.delete(obj);
+    entry.overlayEl.remove();
+    entry.tooltipEl.remove();
+    map.delete(obj);
   }
 
-  private _removeAllHighlights(): void {
-    for (const obj of [...this._entries.keys()]) {
-      this._removeHighlight(obj);
+  private _clearAllOverlays(map: Map<Object3D, OverlayEntry>): void {
+    for (const entry of map.values()) {
+      entry.overlayEl.remove();
+      entry.tooltipEl.remove();
     }
-  }
-
-  private _getLabelText(obj: Object3D): string {
-    const testId = obj.userData?.testId;
-    if (testId) return testId;
-    if (obj.name) return obj.name;
-    return obj.type;
+    map.clear();
   }
 
   // -----------------------------------------------------------------------

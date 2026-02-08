@@ -111,6 +111,10 @@ export class DomMirror {
     const tag = getTagForType(meta.type);
     const element = document.createElement(tag);
 
+    // Style as positioned block so Chrome DevTools can highlight it.
+    // Position/dimensions are updated per-frame by ThreeDom's projection sync.
+    element.style.cssText = 'display:block;position:absolute;pointer-events:none;box-sizing:border-box;';
+
     // Apply all Tier 1 attributes
     const prevAttrs = new Map<string, string>();
     applyAttributes(element, meta, prevAttrs);
@@ -241,6 +245,13 @@ export class DomMirror {
   // -------------------------------------------------------------------------
   // Querying
   // -------------------------------------------------------------------------
+
+  /**
+   * Get the root DOM element.
+   */
+  getRootElement(): HTMLElement | null {
+    return this._rootElement;
+  }
 
   /**
    * Get the materialized DOM element for an object, if it exists.
