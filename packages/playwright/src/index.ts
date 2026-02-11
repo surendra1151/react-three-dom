@@ -14,14 +14,20 @@ export {
   drag,
   wheel,
   pointerMiss,
+  drawPathOnCanvas,
 } from './interactions';
 
+// Path generators for drawPath
+export { linePath, curvePath, rectPath, circlePath, type DrawPoint } from './pathGenerators';
+
 // Waiter utilities
-export { waitForSceneReady, waitForIdle, waitForObject } from './waiters';
+export { waitForSceneReady, waitForIdle, waitForObject, waitForNewObject } from './waiters';
 export type {
   WaitForSceneReadyOptions,
   WaitForIdleOptions,
   WaitForObjectOptions,
+  WaitForNewObjectOptions,
+  WaitForNewObjectResult,
 } from './waiters';
 
 // Re-exported types for convenience

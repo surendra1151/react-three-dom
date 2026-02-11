@@ -8,7 +8,7 @@ import type { ObjectMetadata, ObjectInspection } from './types';
 // Every matcher auto-retries until the assertion passes or the timeout
 // expires, matching Playwright's built-in assertion behaviour.
 //
-// All 21 matchers:
+// All 26 matchers:
 //  Tier 1 (metadata): toExist, toBeVisible, toHavePosition, toHaveRotation,
 //    toHaveScale, toHaveType, toHaveName, toHaveGeometryType,
 //    toHaveMaterialType, toHaveChildCount, toHaveParent,
@@ -16,13 +16,53 @@ import type { ObjectMetadata, ObjectInspection } from './types';
 //  Tier 2 (inspection): toBeInFrustum, toHaveBounds, toHaveColor,
 //    toHaveOpacity, toBeTransparent, toHaveVertexCount,
 //    toHaveTriangleCount, toHaveUserData, toHaveMapTexture
+//  Scene-level: toHaveObjectCount, toHaveObjectCountGreaterThan,
+//    toHaveCountByType, toHaveTotalTriangleCount,
+//    toHaveTotalTriangleCountLessThan
 // ---------------------------------------------------------------------------
 
 const DEFAULT_TIMEOUT = 5_000;
 const DEFAULT_INTERVAL = 100;
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Scene-level helpers
+// ---------------------------------------------------------------------------
+
+async function fetchSceneCount(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const api = window.__R3F_DOM__;
+    return api ? api.getCount() : 0;
+  });
+}
+
+async function fetchCountByType(page: Page, type: string): Promise<number> {
+  return page.evaluate((t) => {
+    const api = window.__R3F_DOM__;
+    return api ? api.getCountByType(t) : 0;
+  }, type);
+}
+
+async function fetchTotalTriangles(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const api = window.__R3F_DOM__;
+    if (!api) return 0;
+    const bridge = api; // capture for nested function
+    const snap = bridge.snapshot();
+    let total = 0;
+    function walk(node: { uuid: string; children: unknown[] }) {
+      const meta = bridge.getByUuid(node.uuid);
+      if (meta && meta.triangleCount) total += meta.triangleCount;
+      for (const child of node.children) {
+        walk(child as typeof node);
+      }
+    }
+    walk(snap.tree as unknown as { uuid: string; children: unknown[] });
+    return total;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Object-level helpers
 // ---------------------------------------------------------------------------
 
 async function fetchMeta(page: Page, id: string): Promise<ObjectMetadata | null> {
@@ -648,6 +688,179 @@ export const expect = baseExpect.extend({
           : `Expected "${id}" map "${expectedName}", got "${actual ?? 'none'}" (waited ${timeout}ms)`;
       },
       name: 'toHaveMapTexture', expected: expectedName ?? 'any map', actual,
+    };
+  },
+
+  // =========================================================================
+  // Scene-level matchers (no object ID — operate on the whole scene)
+  // =========================================================================
+
+  /**
+   * Assert the total number of objects in the scene.
+   * Auto-retries until the count matches or timeout.
+   *
+   * @example expect(r3f).toHaveObjectCount(42);
+   * @example expect(r3f).toHaveObjectCount(42, { timeout: 10_000 });
+   */
+  async toHaveObjectCount(
+    r3f: R3FMatcherReceiver,
+    expected: number,
+    options?: MatcherOptions,
+  ) {
+    const isNot = this.isNot;
+    const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = options?.interval ?? DEFAULT_INTERVAL;
+    let actual = -1;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        actual = await fetchSceneCount(r3f.page);
+        pass = actual === expected;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected scene to NOT have ${expected} objects, but it does`
+          : `Expected scene to have ${expected} objects, got ${actual} (waited ${timeout}ms)`,
+      name: 'toHaveObjectCount', expected, actual,
+    };
+  },
+
+  /**
+   * Assert the total number of objects is at least `min`.
+   * Useful for BIM scenes where the exact count may vary slightly.
+   *
+   * @example expect(r3f).toHaveObjectCountGreaterThan(10);
+   */
+  async toHaveObjectCountGreaterThan(
+    r3f: R3FMatcherReceiver,
+    min: number,
+    options?: MatcherOptions,
+  ) {
+    const isNot = this.isNot;
+    const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = options?.interval ?? DEFAULT_INTERVAL;
+    let actual = -1;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        actual = await fetchSceneCount(r3f.page);
+        pass = actual > min;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected scene to have at most ${min} objects, but has ${actual}`
+          : `Expected scene to have more than ${min} objects, got ${actual} (waited ${timeout}ms)`,
+      name: 'toHaveObjectCountGreaterThan', expected: `> ${min}`, actual,
+    };
+  },
+
+  /**
+   * Assert the count of objects of a specific Three.js type.
+   * Auto-retries until the count matches or timeout.
+   *
+   * @example expect(r3f).toHaveCountByType('Mesh', 5);
+   * @example expect(r3f).toHaveCountByType('Line', 10, { timeout: 10_000 });
+   */
+  async toHaveCountByType(
+    r3f: R3FMatcherReceiver,
+    type: string,
+    expected: number,
+    options?: MatcherOptions,
+  ) {
+    const isNot = this.isNot;
+    const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = options?.interval ?? DEFAULT_INTERVAL;
+    let actual = -1;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        actual = await fetchCountByType(r3f.page, type);
+        pass = actual === expected;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected scene to NOT have ${expected} "${type}" objects, but it does`
+          : `Expected ${expected} "${type}" objects, got ${actual} (waited ${timeout}ms)`,
+      name: 'toHaveCountByType', expected, actual,
+    };
+  },
+
+  /**
+   * Assert the total triangle count across all meshes in the scene.
+   * Use as a performance budget guard — fail if the scene exceeds a threshold.
+   *
+   * @example expect(r3f).toHaveTotalTriangleCount(50000);
+   * @example expect(r3f).not.toHaveTotalTriangleCountGreaterThan(100000); // budget guard
+   */
+  async toHaveTotalTriangleCount(
+    r3f: R3FMatcherReceiver,
+    expected: number,
+    options?: MatcherOptions,
+  ) {
+    const isNot = this.isNot;
+    const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = options?.interval ?? DEFAULT_INTERVAL;
+    let actual = -1;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        actual = await fetchTotalTriangles(r3f.page);
+        pass = actual === expected;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected scene to NOT have ${expected} total triangles, but it does`
+          : `Expected ${expected} total triangles, got ${actual} (waited ${timeout}ms)`,
+      name: 'toHaveTotalTriangleCount', expected, actual,
+    };
+  },
+
+  /**
+   * Assert the total triangle count is at most `max`.
+   * Perfect as a performance budget guard to prevent scene bloat.
+   *
+   * @example expect(r3f).toHaveTotalTriangleCountLessThan(100_000);
+   */
+  async toHaveTotalTriangleCountLessThan(
+    r3f: R3FMatcherReceiver,
+    max: number,
+    options?: MatcherOptions,
+  ) {
+    const isNot = this.isNot;
+    const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = options?.interval ?? DEFAULT_INTERVAL;
+    let actual = -1;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        actual = await fetchTotalTriangles(r3f.page);
+        pass = actual < max;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected scene to have at least ${max} triangles, but has ${actual}`
+          : `Expected scene to have fewer than ${max} triangles, got ${actual} (waited ${timeout}ms)`,
+      name: 'toHaveTotalTriangleCountLessThan', expected: `< ${max}`, actual,
     };
   },
 });

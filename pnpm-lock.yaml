@@ -127,8 +127,8 @@ importers:
   packages/inspector:
     dependencies:
       '@react-three-dom/core':
-        specifier: workspace:*
-        version: link:../core
+        specifier: ^0.1.0
+        version: 0.1.0(@react-three/fiber@8.18.0(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(three@0.171.0))(react@18.3.1)(three@0.171.0)
     devDependencies:
       '@types/react':
         specifier: ^18
@@ -689,6 +689,13 @@ packages:
 
   '@react-spring/types@9.7.5':
     resolution: {integrity: sha512-HVj7LrZ4ReHWBimBvu2SKND3cDVUPWKLqRTmWe/fNY6o1owGOX0cAHbdPDTMelgBlVbrTKrre6lFkhqGZErK/g==}
+
+  '@react-three-dom/core@0.1.0':
+    resolution: {integrity: sha512-/CJCWyQ5Fe2kFmF6CKMJc8I4wJ5OZsDyK6w+dFiWC0nVzUyG0ZyaiuwL0mVm1nJ6/MywU0j9OXFMXPsaPm4T5g==}
+    peerDependencies:
+      '@react-three/fiber': '>=8.0.0'
+      react: '>=18.0.0'
+      three: '>=0.150.0'
 
   '@react-three/drei@9.122.0':
     resolution: {integrity: sha512-SEO/F/rBCTjlLez7WAlpys+iGe9hty4rNgjZvgkQeXFSiwqD4Hbk/wNHMAbdd8vprO2Aj81mihv4dF5bC7D0CA==}
@@ -2913,6 +2920,12 @@ snapshots:
       three: 0.171.0
 
   '@react-spring/types@9.7.5': {}
+
+  '@react-three-dom/core@0.1.0(@react-three/fiber@8.18.0(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(three@0.171.0))(react@18.3.1)(three@0.171.0)':
+    dependencies:
+      '@react-three/fiber': 8.18.0(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(three@0.171.0)
+      react: 18.3.1
+      three: 0.171.0
 
   '@react-three/drei@9.122.0(@react-three/fiber@8.18.0(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(three@0.171.0))(@types/react@18.3.28)(@types/three@0.171.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(three@0.171.0)(use-sync-external-store@1.6.0(react@18.3.1))':
     dependencies:

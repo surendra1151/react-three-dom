@@ -32,6 +32,11 @@ declare global {
       r3fWheel(idOrUuid: string, options?: { deltaY?: number; deltaX?: number }): Chainable<void>;
       /** Click empty space to trigger onPointerMissed handlers. */
       r3fPointerMiss(): Chainable<void>;
+      /** Draw a freeform path on the canvas (for drawing/annotation apps). */
+      r3fDrawPath(
+        points: Array<{ x: number; y: number; pressure?: number }>,
+        options?: { stepDelayMs?: number; pointerType?: 'mouse' | 'pen' | 'touch'; clickAtEnd?: boolean },
+      ): Chainable<{ eventCount: number; pointCount: number }>;
 
       // ---- Selection ----
       /** Select a 3D object (highlights in scene). */
@@ -49,6 +54,16 @@ declare global {
       /** Get the total number of tracked objects. */
       r3fGetCount(): Chainable<number>;
 
+      // ---- BIM/CAD queries ----
+      /** Get all objects of a given Three.js type (e.g. "Mesh", "Group", "Line"). */
+      r3fGetByType(type: string): Chainable<ObjectMetadata[]>;
+      /** Get objects that have a specific userData key (and optionally matching value). */
+      r3fGetByUserData(key: string, value?: unknown): Chainable<ObjectMetadata[]>;
+      /** Count objects of a given Three.js type. */
+      r3fGetCountByType(type: string): Chainable<number>;
+      /** Batch lookup: get metadata for multiple objects by testId or uuid. */
+      r3fGetObjects(ids: string[]): Chainable<Record<string, ObjectMetadata | null>>;
+
       // ---- Waiters ----
       /** Wait until the scene is ready (bridge available, object count stable). */
       r3fWaitForSceneReady(options?: {
@@ -62,6 +77,22 @@ declare global {
         pollIntervalMs?: number;
         timeout?: number;
       }): Chainable<void>;
+      /** Wait until a specific object (by testId or uuid) exists in the scene. */
+      r3fWaitForObject(
+        idOrUuid: string,
+        options?: {
+          bridgeTimeout?: number;
+          objectTimeout?: number;
+          pollIntervalMs?: number;
+        },
+      ): Chainable<void>;
+      /** Wait until new object(s) appear in the scene (for drawing/annotation apps). */
+      r3fWaitForNewObject(options?: {
+        type?: string;
+        nameContains?: string;
+        pollIntervalMs?: number;
+        timeout?: number;
+      }): Chainable<{ newObjects: ObjectMetadata[]; newUuids: string[]; count: number }>;
     }
 
     interface Assertion {
@@ -114,6 +145,18 @@ declare global {
       r3fUserData(idOrUuid: string, key: string, expectedValue?: unknown): Assertion;
       /** Assert material has a map texture (optionally by name). */
       r3fMapTexture(idOrUuid: string, expectedMapName?: string): Assertion;
+
+      // ---- Scene-level assertions ----
+      /** Assert total object count in the scene. */
+      r3fObjectCount(expected: number): Assertion;
+      /** Assert total object count is greater than a minimum. */
+      r3fObjectCountGreaterThan(min: number): Assertion;
+      /** Assert count of objects of a specific type. */
+      r3fCountByType(type: string, expected: number): Assertion;
+      /** Assert total triangle count across all meshes. */
+      r3fTotalTriangleCount(expected: number): Assertion;
+      /** Assert total triangle count is less than a maximum (performance budget). */
+      r3fTotalTriangleCountLessThan(max: number): Assertion;
     }
   }
 }

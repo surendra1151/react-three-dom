@@ -172,4 +172,45 @@ export function registerCommands(): void {
       return getR3F(win).getCount();
     });
   });
+
+  // ---- Drawing interactions ----
+
+  Cypress.Commands.add(
+    'r3fDrawPath',
+    (
+      points: Array<{ x: number; y: number; pressure?: number }>,
+      options?: { stepDelayMs?: number; pointerType?: 'mouse' | 'pen' | 'touch'; clickAtEnd?: boolean },
+    ) => {
+      return cy.window({ log: false }).then(async (win) => {
+        const api = getR3F(win);
+        return api.drawPath(points, options);
+      });
+    },
+  );
+
+  // ---- BIM/CAD queries ----
+
+  Cypress.Commands.add('r3fGetByType', (type: string) => {
+    return cy.window({ log: false }).then((win) => {
+      return getR3F(win).getByType(type);
+    });
+  });
+
+  Cypress.Commands.add('r3fGetByUserData', (key: string, value?: unknown) => {
+    return cy.window({ log: false }).then((win) => {
+      return getR3F(win).getByUserData(key, value);
+    });
+  });
+
+  Cypress.Commands.add('r3fGetCountByType', (type: string) => {
+    return cy.window({ log: false }).then((win) => {
+      return getR3F(win).getCountByType(type);
+    });
+  });
+
+  Cypress.Commands.add('r3fGetObjects', (ids: string[]) => {
+    return cy.window({ log: false }).then((win) => {
+      return getR3F(win).getObjects(ids);
+    });
+  });
 }

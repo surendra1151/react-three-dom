@@ -12,12 +12,13 @@ import { hover3D } from '../interactions/hover';
 import { drag3D } from '../interactions/drag';
 import { wheel3D } from '../interactions/wheel';
 import { pointerMiss3D } from '../interactions/pointerMiss';
+import { drawPath as drawPathFn } from '../interactions/drawPath';
 import { setInteractionState, clearInteractionState } from '../interactions/resolve';
 import { SelectionManager } from '../highlight/SelectionManager';
 import { Highlighter } from '../highlight/Highlighter';
 import { version } from '../version';
 import { r3fLog, enableDebug } from '../debug';
-import type { R3FDOM } from '../types';
+import type { R3FDOM, ObjectMetadata } from '../types';
 
 // ---------------------------------------------------------------------------
 // ThreeDom Props
@@ -138,6 +139,17 @@ function exposeGlobalAPI(store: ObjectStore): void {
     getByUuid: (uuid: string) => store.getByUuid(uuid),
     getByName: (name: string) => store.getByName(name),
     getCount: () => store.getCount(),
+    getByType: (type: string) => store.getByType(type),
+    getByUserData: (key: string, value?: unknown) => store.getByUserData(key, value),
+    getCountByType: (type: string) => store.getCountByType(type),
+    getObjects: (ids: string[]) => {
+      const map = store.getObjects(ids);
+      const result: Record<string, ObjectMetadata | null> = {};
+      for (const [id, meta] of map) {
+        result[id] = meta;
+      }
+      return result;
+    },
     snapshot: () => createSnapshot(store),
     inspect: (idOrUuid: string) => store.inspect(idOrUuid),
     click: (idOrUuid: string) => { click3D(idOrUuid); },
@@ -147,6 +159,10 @@ function exposeGlobalAPI(store: ObjectStore): void {
     drag: async (idOrUuid: string, delta: { x: number; y: number; z: number }) => { await drag3D(idOrUuid, delta); },
     wheel: (idOrUuid: string, options?: { deltaY?: number; deltaX?: number }) => { wheel3D(idOrUuid, options); },
     pointerMiss: () => { pointerMiss3D(); },
+    drawPath: async (points, options) => {
+      const result = await drawPathFn(points, options);
+      return { eventCount: result.eventCount, pointCount: result.pointCount };
+    },
     select: (idOrUuid: string) => {
       const obj = store.getObject3D(idOrUuid);
       if (obj && _selectionManager) _selectionManager.select(obj);
@@ -344,6 +360,14 @@ export function ThreeDom({
         getByUuid: () => null,
         getByName: () => [],
         getCount: () => 0,
+        getByType: () => [],
+        getByUserData: () => [],
+        getCountByType: () => 0,
+        getObjects: (ids: string[]) => {
+          const result: Record<string, null> = {};
+          for (const id of ids) result[id] = null;
+          return result;
+        },
         snapshot: () => ({ timestamp: 0, objectCount: 0, tree: { uuid: '', name: '', type: 'Scene', visible: true, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], children: [] } }),
         inspect: () => null,
         click: () => {},
@@ -353,6 +377,7 @@ export function ThreeDom({
         drag: async () => {},
         wheel: () => {},
         pointerMiss: () => {},
+        drawPath: async () => ({ eventCount: 0, pointCount: 0 }),
         select: () => {},
         clearSelection: () => {},
         getObject3D: () => null,

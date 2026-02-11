@@ -75,6 +75,10 @@ export interface R3FDOM {
   getByUuid(uuid: string): ObjectMetadata | null;
   getByName(name: string): ObjectMetadata[];
   getCount(): number;
+  getByType(type: string): ObjectMetadata[];
+  getByUserData(key: string, value?: unknown): ObjectMetadata[];
+  getCountByType(type: string): number;
+  getObjects(ids: string[]): Record<string, ObjectMetadata | null>;
   snapshot(): SceneSnapshot;
   inspect(idOrUuid: string): ObjectInspection | null;
   click(idOrUuid: string): void;
@@ -84,6 +88,10 @@ export interface R3FDOM {
   drag(idOrUuid: string, delta: { x: number; y: number; z: number }): Promise<void>;
   wheel(idOrUuid: string, options?: { deltaY?: number; deltaX?: number }): void;
   pointerMiss(): void;
+  drawPath(
+    points: Array<{ x: number; y: number; pressure?: number }>,
+    options?: { stepDelayMs?: number; pointerType?: 'mouse' | 'pen' | 'touch'; clickAtEnd?: boolean },
+  ): Promise<{ eventCount: number; pointCount: number }>;
   select(idOrUuid: string): void;
   clearSelection(): void;
   getObject3D(idOrUuid: string): unknown;

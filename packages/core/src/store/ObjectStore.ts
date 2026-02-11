@@ -473,6 +473,68 @@ export class ObjectStore {
     return results;
   }
 
+  /**
+   * Batch lookup: get metadata for multiple objects by testId or uuid.
+   * Returns a Map from the requested id to its metadata (or null if not found).
+   * Single round-trip — much more efficient than calling getByTestId/getByUuid
+   * in a loop for BIM/CAD scenes with many objects.
+   * O(k) where k is the number of requested ids.
+   */
+  getObjects(ids: string[]): Map<string, ObjectMetadata | null> {
+    const results = new Map<string, ObjectMetadata | null>();
+    for (const id of ids) {
+      const meta = this.getByTestId(id) ?? this.getByUuid(id);
+      results.set(id, meta);
+    }
+    return results;
+  }
+
+  /**
+   * Get all objects of a given Three.js type (e.g. "Mesh", "Group", "Line").
+   * Linear scan — O(n) where n is total tracked objects.
+   */
+  getByType(type: string): ObjectMetadata[] {
+    const results: ObjectMetadata[] = [];
+    for (const obj of this.getFlatList()) {
+      const meta = this._metaByObject.get(obj);
+      if (meta && meta.type === type) results.push(meta);
+    }
+    return results;
+  }
+
+  /**
+   * Get all objects that have a specific userData key.
+   * If `value` is provided, only returns objects where `userData[key]` matches.
+   * Uses JSON.stringify for deep equality on complex values.
+   * Linear scan — O(n).
+   */
+  getByUserData(key: string, value?: unknown): ObjectMetadata[] {
+    const results: ObjectMetadata[] = [];
+    const checkValue = value !== undefined;
+    const valueJson = checkValue ? JSON.stringify(value) : '';
+    for (const obj of this.getFlatList()) {
+      if (!(key in obj.userData)) continue;
+      if (checkValue && JSON.stringify(obj.userData[key]) !== valueJson) continue;
+      const meta = this._metaByObject.get(obj);
+      if (meta) results.push(meta);
+    }
+    return results;
+  }
+
+  /**
+   * Count objects of a given Three.js type.
+   * More efficient than getByType().length — no array allocation.
+   * Linear scan — O(n).
+   */
+  getCountByType(type: string): number {
+    let count = 0;
+    for (const obj of this.getFlatList()) {
+      const meta = this._metaByObject.get(obj);
+      if (meta && meta.type === type) count++;
+    }
+    return count;
+  }
+
   /** Get the raw Three.js Object3D by testId or uuid. */
   getObject3D(idOrUuid: string): Object3D | null {
     // Try testId first, then uuid

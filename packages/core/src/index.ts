@@ -106,6 +106,16 @@ export {
 } from './interactions/drag';
 export { wheel3D, type Wheel3DOptions, type Wheel3DResult } from './interactions/wheel';
 export { pointerMiss3D, type PointerMiss3DOptions } from './interactions/pointerMiss';
+export {
+  drawPath,
+  linePath,
+  curvePath,
+  rectPath,
+  circlePath,
+  type DrawPoint,
+  type DrawPathOptions,
+  type DrawPathResult,
+} from './interactions/drawPath';
 
 // ---------------------------------------------------------------------------
 // Interactions — event dispatch (low-level)

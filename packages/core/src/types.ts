@@ -155,6 +155,14 @@ export interface R3FDOM {
   getByName(name: string): ObjectMetadata[];
   /** Total number of tracked objects */
   getCount(): number;
+  /** Get all objects of a given Three.js type (Mesh, Group, Line, Points, etc.) */
+  getByType(type: string): ObjectMetadata[];
+  /** Get objects that have a specific userData key (and optionally matching value) */
+  getByUserData(key: string, value?: unknown): ObjectMetadata[];
+  /** Count objects of a given Three.js type */
+  getCountByType(type: string): number;
+  /** Batch lookup: get metadata for multiple objects by testId or uuid in one call */
+  getObjects(ids: string[]): Record<string, ObjectMetadata | null>;
   /** Full structured JSON snapshot from Tier 1 store */
   snapshot(): SceneSnapshot;
 
@@ -175,6 +183,12 @@ export interface R3FDOM {
   wheel(idOrUuid: string, options?: { deltaY?: number; deltaX?: number }): void;
   /** Click empty space to trigger onPointerMissed */
   pointerMiss(): void;
+  /** Draw a freeform path on the canvas (for drawing/annotation apps) */
+  drawPath(
+    points: Array<{ x: number; y: number; pressure?: number }>,
+    options?: { stepDelayMs?: number; pointerType?: 'mouse' | 'pen' | 'touch'; clickAtEnd?: boolean },
+  ): Promise<{ eventCount: number; pointCount: number }>;
+
 
   /** Select an object (shows highlight wireframe in scene) */
   select(idOrUuid: string): void;

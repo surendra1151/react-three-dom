@@ -1,4 +1,73 @@
 import type { Page } from '@playwright/test';
+import type { ObjectMetadata } from './types';
+
+// ---------------------------------------------------------------------------
+// Shared: waitForReadyBridge — wait until __R3F_DOM__._ready === true
+// ---------------------------------------------------------------------------
+
+/**
+ * Wait until the `window.__R3F_DOM__` bridge exists AND `_ready === true`.
+ *
+ * Fails fast with a rich diagnostic if the bridge is present but
+ * `_ready === false` and `_error` is set (i.e. ThreeDom setup crashed).
+ * This prevents all waiters from silently timing out when the bridge is
+ * in an error state — the developer gets an immediate, actionable message.
+ *
+ * @internal Used by all public waiter functions.
+ */
+async function waitForReadyBridge(page: Page, timeout: number): Promise<void> {
+  const deadline = Date.now() + timeout;
+  const pollMs = 100;
+
+  while (Date.now() < deadline) {
+    const state = await page.evaluate(() => {
+      const api = window.__R3F_DOM__;
+      if (!api) return { exists: false as const };
+      return {
+        exists: true as const,
+        ready: api._ready,
+        error: api._error ?? null,
+        count: api.getCount(),
+      };
+    });
+
+    if (state.exists && state.ready) {
+      return; // Bridge is ready
+    }
+
+    if (state.exists && !state.ready && state.error) {
+      // Bridge exists but failed — fail fast with diagnostic
+      throw new Error(
+        `[react-three-dom] Bridge initialization failed: ${state.error}\n` +
+        `The <ThreeDom> component mounted but threw during setup. ` +
+        `Check the browser console for the full stack trace.`,
+      );
+    }
+
+    // Bridge doesn't exist yet, or exists but not ready (still initializing)
+    await page.waitForTimeout(pollMs);
+  }
+
+  // Final check before throwing
+  const finalState = await page.evaluate(() => {
+    const api = window.__R3F_DOM__;
+    if (!api) return { exists: false, ready: false, error: null };
+    return { exists: true, ready: api._ready, error: api._error ?? null };
+  });
+
+  if (finalState.exists && finalState.error) {
+    throw new Error(
+      `[react-three-dom] Bridge initialization failed: ${finalState.error}\n` +
+      `The <ThreeDom> component mounted but threw during setup.`,
+    );
+  }
+
+  throw new Error(
+    `[react-three-dom] Timed out after ${timeout}ms waiting for the bridge to be ready.\n` +
+    `Bridge exists: ${finalState.exists}, ready: ${finalState.ready}.\n` +
+    `Ensure <ThreeDom> is mounted inside your <Canvas> component.`,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // waitForSceneReady — wait until the scene object count stabilises
@@ -14,8 +83,11 @@ export interface WaitForSceneReadyOptions {
 }
 
 /**
- * Wait until `window.__R3F_DOM__` is available and the scene's object count
- * has stabilised (no additions or removals) over several consecutive checks.
+ * Wait until `window.__R3F_DOM__` is available, `_ready === true`, and the
+ * scene's object count has stabilised over several consecutive checks.
+ *
+ * If the bridge exists but `_ready` is false and `_error` is set, this
+ * fails immediately with a rich diagnostic message instead of timing out.
  */
 export async function waitForSceneReady(
   page: Page,
@@ -29,10 +101,8 @@ export async function waitForSceneReady(
 
   const deadline = Date.now() + timeout;
 
-  // First, wait for __R3F_DOM__ to exist
-  await page.waitForFunction(() => typeof window.__R3F_DOM__ !== 'undefined', undefined, {
-    timeout,
-  });
+  // Wait for the bridge to exist AND be ready (or have an error)
+  await waitForReadyBridge(page, timeout);
 
   let lastCount = -1;
   let stableRuns = 0;
@@ -70,12 +140,14 @@ export interface WaitForObjectOptions {
 }
 
 /**
- * Wait until `window.__R3F_DOM__` is available and an object with the given
+ * Wait until `window.__R3F_DOM__` is ready and an object with the given
  * testId or uuid exists in the scene.
  *
  * Use this instead of `waitForSceneReady` when the scene object count never
  * stabilizes (e.g. continuous loading, animations adding/removing objects,
  * or GLTF/models loading asynchronously).
+ *
+ * Fails fast if the bridge reports `_ready: false` with an `_error`.
  */
 export async function waitForObject(
   page: Page,
@@ -88,16 +160,15 @@ export async function waitForObject(
     pollIntervalMs = 200,
   } = options;
 
-  await page.waitForFunction(() => typeof window.__R3F_DOM__ !== 'undefined', undefined, {
-    timeout: bridgeTimeout,
-  });
+  // Wait for bridge to be ready (with _ready === true), fail fast on _error
+  await waitForReadyBridge(page, bridgeTimeout);
 
   const deadline = Date.now() + objectTimeout;
   while (Date.now() < deadline) {
     const found = await page.evaluate(
       (id) => {
         const api = window.__R3F_DOM__;
-        if (!api) return false;
+        if (!api || !api._ready) return false;
         return (api.getByTestId(id) ?? api.getByUuid(id)) !== null;
       },
       idOrUuid,
@@ -106,8 +177,25 @@ export async function waitForObject(
     await page.waitForTimeout(pollIntervalMs);
   }
 
+  // Build diagnostic — check if the bridge is alive but the object simply doesn't exist
+  const diagnostics = await page.evaluate(() => {
+    const api = window.__R3F_DOM__;
+    if (!api) return { bridgeExists: false, ready: false, count: 0, error: null };
+    return {
+      bridgeExists: true,
+      ready: api._ready,
+      count: api.getCount(),
+      error: api._error ?? null,
+    };
+  });
+
   throw new Error(
-    `waitForObject("${idOrUuid}") timed out after ${objectTimeout}ms. Is the object rendered with userData.testId or this uuid?`,
+    `waitForObject("${idOrUuid}") timed out after ${objectTimeout}ms. ` +
+    `Bridge: ${diagnostics.bridgeExists ? 'exists' : 'missing'}, ` +
+    `ready: ${diagnostics.ready}, ` +
+    `objectCount: ${diagnostics.count}` +
+    (diagnostics.error ? `, error: ${diagnostics.error}` : '') + '. ' +
+    `Is the object rendered with userData.testId="${idOrUuid}" or uuid="${idOrUuid}"?`,
   );
 }
 
@@ -129,6 +217,8 @@ export interface WaitForIdleOptions {
  * This works by taking successive snapshots and comparing them. When the
  * JSON representation is unchanged for `idleFrames` consecutive rAF
  * callbacks, the scene is considered idle.
+ *
+ * Checks `_ready === true` before starting. Fails fast if `_error` is set.
  */
 export async function waitForIdle(
   page: Page,
@@ -139,9 +229,12 @@ export async function waitForIdle(
     timeout = 10_000,
   } = options;
 
+  // Ensure bridge is ready before polling for idle
+  await waitForReadyBridge(page, timeout);
+
   const settled = await page.evaluate(
     ([frames, timeoutMs]) => {
-      return new Promise<boolean>((resolve) => {
+      return new Promise<boolean | string>((resolve) => {
         const deadline = Date.now() + timeoutMs;
         let lastJson = '';
         let stableCount = 0;
@@ -152,8 +245,19 @@ export async function waitForIdle(
             return;
           }
 
-          const snap = window.__R3F_DOM__?.snapshot();
-          const json = snap ? JSON.stringify(snap.tree) : '';
+          const api = window.__R3F_DOM__;
+          if (!api || !api._ready) {
+            // Bridge disappeared or became un-ready (e.g. unmount/remount)
+            if (api && api._error) {
+              resolve(`Bridge error: ${api._error}`);
+              return;
+            }
+            requestAnimationFrame(check);
+            return;
+          }
+
+          const snap = api.snapshot();
+          const json = JSON.stringify(snap.tree);
 
           if (json === lastJson && json !== '') {
             stableCount++;
@@ -175,7 +279,184 @@ export async function waitForIdle(
     [idleFrames, timeout] as const,
   );
 
+  if (typeof settled === 'string') {
+    throw new Error(`waitForIdle failed: ${settled}`);
+  }
   if (!settled) {
     throw new Error(`waitForIdle timed out after ${timeout}ms`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// waitForNewObject — wait until a new object appears in the scene
+// ---------------------------------------------------------------------------
+
+export interface WaitForNewObjectOptions {
+  /**
+   * Only consider new objects of this Three.js type (e.g. "Mesh", "Line").
+   * If not set, any new object type qualifies.
+   */
+  type?: string;
+
+  /**
+   * If provided, the new object's name must contain this substring.
+   * Useful for apps that name objects predictably (e.g. "stroke-", "wall-").
+   */
+  nameContains?: string;
+
+  /**
+   * Poll interval in ms. Default: 100
+   */
+  pollIntervalMs?: number;
+
+  /**
+   * Overall timeout in ms. Default: 10_000
+   */
+  timeout?: number;
+}
+
+/** Result returned when new objects are detected. */
+export interface WaitForNewObjectResult {
+  /** Metadata of all newly added objects (matching the filter). */
+  newObjects: ObjectMetadata[];
+  /** UUIDs of the newly added objects. */
+  newUuids: string[];
+  /** Total number of new objects detected. */
+  count: number;
+}
+
+/**
+ * Wait until one or more new objects appear in the scene that were not present
+ * at the time this function was called.
+ *
+ * This is designed for drawing/annotation apps where user interactions
+ * (like `drawPath`) create new Three.js objects asynchronously.
+ *
+ * @param page      Playwright Page instance
+ * @param options   Filter and timing options
+ * @returns         Metadata of the newly added object(s)
+ * @throws          If no new objects appear within the timeout
+ *
+ * @example
+ * ```typescript
+ * // Draw a stroke, then wait for the new Line object
+ * const before = await r3f.getCount();
+ * await r3f.drawPath(points);
+ * const result = await waitForNewObject(page, { type: 'Line' });
+ * expect(result.count).toBe(1);
+ * ```
+ */
+export async function waitForNewObject(
+  page: Page,
+  options: WaitForNewObjectOptions = {},
+): Promise<WaitForNewObjectResult> {
+  const {
+    type,
+    nameContains,
+    pollIntervalMs = 100,
+    timeout = 10_000,
+  } = options;
+
+  // 1. Capture the current set of UUIDs (baseline)
+  const baselineUuids: string[] = await page.evaluate(() => {
+    const api = window.__R3F_DOM__;
+    if (!api) return [];
+    const snap = api.snapshot();
+    const uuids: string[] = [];
+    function collect(node: { uuid: string; children: Array<{ uuid: string; children: unknown[] }> }) {
+      uuids.push(node.uuid);
+      for (const child of node.children) {
+        collect(child as typeof node);
+      }
+    }
+    collect(snap.tree as unknown as { uuid: string; children: Array<{ uuid: string; children: unknown[] }> });
+    return uuids;
+  });
+
+  const deadline = Date.now() + timeout;
+
+  // 2. Poll until new objects appear
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(pollIntervalMs);
+
+    const result = await page.evaluate(
+      ([filterType, filterName, knownUuids]) => {
+        const api = window.__R3F_DOM__;
+        if (!api) return null;
+
+        const snap = api.snapshot();
+        const known = new Set(knownUuids);
+        const newObjects: Array<{
+          uuid: string;
+          name: string;
+          type: string;
+          visible: boolean;
+          testId?: string;
+          position: [number, number, number];
+          rotation: [number, number, number];
+          scale: [number, number, number];
+        }> = [];
+
+        function scan(node: {
+          uuid: string;
+          name: string;
+          type: string;
+          visible: boolean;
+          testId?: string;
+          position: [number, number, number];
+          rotation: [number, number, number];
+          scale: [number, number, number];
+          children: unknown[];
+        }) {
+          if (!known.has(node.uuid)) {
+            // New object — check filters
+            const typeMatch = !filterType || node.type === filterType;
+            const nameMatch = !filterName || node.name.includes(filterName);
+            if (typeMatch && nameMatch) {
+              newObjects.push({
+                uuid: node.uuid,
+                name: node.name,
+                type: node.type,
+                visible: node.visible,
+                testId: node.testId,
+                position: node.position,
+                rotation: node.rotation,
+                scale: node.scale,
+              });
+            }
+          }
+          for (const child of node.children) {
+            scan(child as typeof node);
+          }
+        }
+
+        scan(snap.tree as unknown as Parameters<typeof scan>[0]);
+
+        if (newObjects.length === 0) return null;
+
+        return {
+          newObjects,
+          newUuids: newObjects.map((o) => o.uuid),
+          count: newObjects.length,
+        };
+      },
+      [type ?? null, nameContains ?? null, baselineUuids] as const,
+    );
+
+    if (result) {
+      return result as WaitForNewObjectResult;
+    }
+  }
+
+  // 3. Timeout — build a descriptive error
+  const filterDesc = [
+    type ? `type="${type}"` : null,
+    nameContains ? `nameContains="${nameContains}"` : null,
+  ].filter(Boolean).join(', ');
+
+  throw new Error(
+    `waitForNewObject timed out after ${timeout}ms. ` +
+    `No new objects appeared${filterDesc ? ` matching ${filterDesc}` : ''}. ` +
+    `Baseline had ${baselineUuids.length} objects.`,
+  );
 }
