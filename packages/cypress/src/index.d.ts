@@ -11,6 +11,12 @@ import type { ObjectMetadata, ObjectInspection, SceneSnapshot } from './types';
 declare global {
   namespace Cypress {
     interface Chainable {
+      // ---- Debug ----
+      /** Enable debug logging. Mirrors [r3f-dom:*] browser logs to Cypress command log. */
+      r3fEnableDebug(): Chainable<void>;
+      /** Log the full scene tree to the Cypress command log and browser console. */
+      r3fLogScene(): Chainable<void>;
+
       // ---- Interactions ----
       /** Click a 3D object by testId or uuid. */
       r3fClick(idOrUuid: string): Chainable<void>;
@@ -59,26 +65,55 @@ declare global {
     }
 
     interface Assertion {
+      // ---- Tier 1: Metadata-based assertions (cheap) ----
       /** Assert that a 3D object with the given testId/uuid exists. */
       r3fExist(idOrUuid: string): Assertion;
       /** Assert that a 3D object is visible. */
       r3fVisible(idOrUuid: string): Assertion;
-      /** Assert that a 3D object is in the camera frustum. */
-      r3fInFrustum(idOrUuid: string): Assertion;
       /** Assert object position within tolerance. */
-      r3fPosition(
-        idOrUuid: string,
-        expected: [number, number, number],
-        tolerance?: number,
-      ): Assertion;
+      r3fPosition(idOrUuid: string, expected: [number, number, number], tolerance?: number): Assertion;
+      /** Assert object rotation (Euler radians) within tolerance. */
+      r3fRotation(idOrUuid: string, expected: [number, number, number], tolerance?: number): Assertion;
+      /** Assert object scale within tolerance. */
+      r3fScale(idOrUuid: string, expected: [number, number, number], tolerance?: number): Assertion;
+      /** Assert object type (Mesh, Group, Line, Points, etc.). */
+      r3fType(idOrUuid: string, expectedType: string): Assertion;
+      /** Assert object name. */
+      r3fName(idOrUuid: string, expectedName: string): Assertion;
+      /** Assert geometry type (BoxGeometry, PlaneGeometry, BufferGeometry, etc.). */
+      r3fGeometryType(idOrUuid: string, expectedGeoType: string): Assertion;
+      /** Assert material type (MeshStandardMaterial, ShaderMaterial, etc.). */
+      r3fMaterialType(idOrUuid: string, expectedMatType: string): Assertion;
+      /** Assert number of direct children. */
+      r3fChildCount(idOrUuid: string, expectedCount: number): Assertion;
+      /** Assert object's parent by testId, uuid, or name. */
+      r3fParent(idOrUuid: string, expectedParent: string): Assertion;
       /** Assert InstancedMesh instance count. */
       r3fInstanceCount(idOrUuid: string, expectedCount: number): Assertion;
+
+      // ---- Tier 2: Inspection-based assertions (heavier) ----
+      /** Assert that a 3D object is in the camera frustum. */
+      r3fInFrustum(idOrUuid: string): Assertion;
       /** Assert world-space bounding box within tolerance. */
       r3fBounds(
         idOrUuid: string,
         expected: { min: [number, number, number]; max: [number, number, number] },
         tolerance?: number,
       ): Assertion;
+      /** Assert material color (hex string, e.g. '#ff0000'). */
+      r3fColor(idOrUuid: string, expectedColor: string): Assertion;
+      /** Assert material opacity (0–1) within tolerance. */
+      r3fOpacity(idOrUuid: string, expectedOpacity: number, tolerance?: number): Assertion;
+      /** Assert material.transparent === true. */
+      r3fTransparent(idOrUuid: string): Assertion;
+      /** Assert geometry vertex count. */
+      r3fVertexCount(idOrUuid: string, expectedCount: number): Assertion;
+      /** Assert geometry triangle count. */
+      r3fTriangleCount(idOrUuid: string, expectedCount: number): Assertion;
+      /** Assert a specific key (and optionally value) in userData. */
+      r3fUserData(idOrUuid: string, key: string, expectedValue?: unknown): Assertion;
+      /** Assert material has a map texture (optionally by name). */
+      r3fMapTexture(idOrUuid: string, expectedMapName?: string): Assertion;
     }
   }
 }

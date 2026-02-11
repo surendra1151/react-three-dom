@@ -132,6 +132,21 @@ export type StoreListener = (event: StoreEvent) => void;
 // ---------------------------------------------------------------------------
 
 export interface R3FDOM {
+  /**
+   * Whether the bridge is fully initialized and ready to use.
+   * - `true`: ThreeDom setup completed successfully, all methods are live.
+   * - `false`: Bridge exists but setup failed or is still initializing.
+   *
+   * Test waiters should check `_ready === true` instead of just `typeof !== 'undefined'`.
+   */
+  _ready: boolean;
+
+  /**
+   * If `_ready` is false, contains the error message from the failed setup.
+   * Undefined when `_ready` is true.
+   */
+  _error?: string;
+
   /** Tier 1: O(1) lookup by testId */
   getByTestId(id: string): ObjectMetadata | null;
   /** Tier 1: O(1) lookup by uuid */
@@ -154,8 +169,8 @@ export interface R3FDOM {
   contextMenu(idOrUuid: string): void;
   /** Deterministic hover on a 3D object */
   hover(idOrUuid: string): void;
-  /** Deterministic drag on a 3D object */
-  drag(idOrUuid: string, delta: { x: number; y: number; z: number }): void;
+  /** Deterministic drag on a 3D object (async — dispatches multi-step pointer sequence) */
+  drag(idOrUuid: string, delta: { x: number; y: number; z: number }): Promise<void>;
   /** Dispatch a wheel/scroll event on a 3D object */
   wheel(idOrUuid: string, options?: { deltaY?: number; deltaX?: number }): void;
   /** Click empty space to trigger onPointerMissed */
@@ -177,5 +192,7 @@ export interface R3FDOM {
 declare global {
   interface Window {
     __R3F_DOM__?: R3FDOM;
+    /** Set to true to enable debug logging from @react-three-dom/core */
+    __R3F_DOM_DEBUG__?: boolean;
   }
 }

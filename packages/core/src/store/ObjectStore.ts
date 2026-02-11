@@ -15,6 +15,7 @@ import type {
   StoreEvent,
   StoreListener,
 } from '../types';
+import { r3fLog } from '../debug';
 
 // ---------------------------------------------------------------------------
 // Helper: extract Tier 1 metadata from a live Three.js object
@@ -36,35 +37,49 @@ function extractMetadata(obj: Object3D): ObjectMetadata {
   };
 
   // Geometry info (Mesh, SkinnedMesh, InstancedMesh, Points, Line, etc.)
-  if ('geometry' in obj) {
-    const geom = (obj as Mesh).geometry;
-    if (geom instanceof BufferGeometry) {
-      meta.geometryType = geom.type;
-      const posAttr = geom.getAttribute('position');
-      if (posAttr) {
-        meta.vertexCount = posAttr.count;
-        if (geom.index) {
-          meta.triangleCount = Math.floor(geom.index.count / 3);
-        } else {
-          meta.triangleCount = Math.floor(posAttr.count / 3);
+  try {
+    if ('geometry' in obj) {
+      const geom = (obj as Mesh).geometry;
+      if (geom instanceof BufferGeometry) {
+        meta.geometryType = geom.type;
+        const posAttr = geom.getAttribute('position');
+        if (posAttr) {
+          meta.vertexCount = posAttr.count;
+          if (geom.index) {
+            meta.triangleCount = Math.floor(geom.index.count / 3);
+          } else {
+            meta.triangleCount = Math.floor(posAttr.count / 3);
+          }
         }
       }
     }
+  } catch {
+    // Skip geometry fields if access fails (corrupted or disposed geometry)
+    r3fLog('store', `extractMetadata: geometry access failed for "${obj.name || obj.uuid}"`);
   }
 
   // Material info
-  if ('material' in obj) {
-    const mat = (obj as Mesh).material;
-    if (mat instanceof Material) {
-      meta.materialType = mat.type;
-    } else if (Array.isArray(mat) && mat.length > 0) {
-      meta.materialType = mat[0].type + (mat.length > 1 ? ` (+${mat.length - 1})` : '');
+  try {
+    if ('material' in obj) {
+      const mat = (obj as Mesh).material;
+      if (mat instanceof Material) {
+        meta.materialType = mat.type;
+      } else if (Array.isArray(mat) && mat.length > 0) {
+        meta.materialType = mat[0].type + (mat.length > 1 ? ` (+${mat.length - 1})` : '');
+      }
     }
+  } catch {
+    // Skip material fields if access fails (disposed material)
+    r3fLog('store', `extractMetadata: material access failed for "${obj.name || obj.uuid}"`);
   }
 
   // InstancedMesh count
-  if (obj instanceof InstancedMesh) {
-    meta.instanceCount = obj.count;
+  try {
+    if (obj instanceof InstancedMesh) {
+      meta.instanceCount = obj.count;
+    }
+  } catch {
+    // Skip instance count if access fails
   }
 
   return meta;
@@ -102,102 +117,125 @@ function hasChanged(prev: ObjectMetadata, curr: ObjectMetadata): boolean {
 const _box3 = new Box3();
 
 function inspectObject(obj: Object3D, metadata: ObjectMetadata): ObjectInspection {
-  // World matrix
-  obj.updateWorldMatrix(true, false);
-  const worldMatrix = Array.from(obj.matrixWorld.elements);
+  // Start with a minimal valid inspection — each section fills in details
+  // and is wrapped in try/catch so a failure in one area (e.g. disposed
+  // geometry) doesn't prevent the rest from being returned.
+  let worldMatrix: number[] = Array(16).fill(0);
+  let boundsMin: [number, number, number] = [0, 0, 0];
+  let boundsMax: [number, number, number] = [0, 0, 0];
 
-  // Bounds
-  _box3.setFromObject(obj);
-  const boundsMin: [number, number, number] = [_box3.min.x, _box3.min.y, _box3.min.z];
-  const boundsMax: [number, number, number] = [_box3.max.x, _box3.max.y, _box3.max.z];
+  // World matrix + bounds
+  try {
+    obj.updateWorldMatrix(true, false);
+    worldMatrix = Array.from(obj.matrixWorld.elements);
+    _box3.setFromObject(obj);
+    boundsMin = [_box3.min.x, _box3.min.y, _box3.min.z];
+    boundsMax = [_box3.max.x, _box3.max.y, _box3.max.z];
+  } catch {
+    r3fLog('store', `inspectObject: world matrix / bounds failed for "${obj.name || obj.uuid}"`);
+  }
 
   const inspection: ObjectInspection = {
     metadata,
     worldMatrix,
     bounds: { min: boundsMin, max: boundsMax },
-    userData: { ...obj.userData },
+    userData: {},
   };
 
+  // userData (shallow copy, may contain non-serializable values)
+  try {
+    inspection.userData = { ...obj.userData };
+  } catch {
+    r3fLog('store', `inspectObject: userData copy failed for "${obj.name || obj.uuid}"`);
+  }
+
   // Geometry details
-  if ('geometry' in obj) {
-    const geom = (obj as Mesh).geometry;
-    if (geom instanceof BufferGeometry) {
-      const geoInspection: GeometryInspection = {
-        type: geom.type,
-        attributes: {},
-      };
-
-      for (const [name, attr] of Object.entries(geom.attributes)) {
-        geoInspection.attributes[name] = {
-          itemSize: attr.itemSize,
-          count: attr.count,
+  try {
+    if ('geometry' in obj) {
+      const geom = (obj as Mesh).geometry;
+      if (geom instanceof BufferGeometry) {
+        const geoInspection: GeometryInspection = {
+          type: geom.type,
+          attributes: {},
         };
-      }
 
-      if (geom.index) {
-        geoInspection.index = { count: geom.index.count };
-      }
+        for (const [name, attr] of Object.entries(geom.attributes)) {
+          geoInspection.attributes[name] = {
+            itemSize: attr.itemSize,
+            count: attr.count,
+          };
+        }
 
-      geom.computeBoundingSphere();
-      const sphere = geom.boundingSphere;
-      if (sphere) {
-        geoInspection.boundingSphere = {
-          center: [sphere.center.x, sphere.center.y, sphere.center.z],
-          radius: sphere.radius,
-        };
-      }
+        if (geom.index) {
+          geoInspection.index = { count: geom.index.count };
+        }
 
-      inspection.geometry = geoInspection;
+        geom.computeBoundingSphere();
+        const sphere = geom.boundingSphere;
+        if (sphere) {
+          geoInspection.boundingSphere = {
+            center: [sphere.center.x, sphere.center.y, sphere.center.z],
+            radius: sphere.radius,
+          };
+        }
+
+        inspection.geometry = geoInspection;
+      }
     }
+  } catch {
+    r3fLog('store', `inspectObject: geometry inspection failed for "${obj.name || obj.uuid}"`);
   }
 
   // Material details
-  if ('material' in obj) {
-    const rawMat = (obj as Mesh).material;
-    const mat = Array.isArray(rawMat) ? rawMat[0] : rawMat;
-    if (mat instanceof Material) {
-      const matInspection: MaterialInspection = {
-        type: mat.type,
-        transparent: mat.transparent,
-        opacity: mat.opacity,
-        side: mat.side,
-      };
+  try {
+    if ('material' in obj) {
+      const rawMat = (obj as Mesh).material;
+      const mat = Array.isArray(rawMat) ? rawMat[0] : rawMat;
+      if (mat instanceof Material) {
+        const matInspection: MaterialInspection = {
+          type: mat.type,
+          transparent: mat.transparent,
+          opacity: mat.opacity,
+          side: mat.side,
+        };
 
-      // Color (most materials have it)
-      if ('color' in mat && (mat as unknown as { color: Color }).color instanceof Color) {
-        matInspection.color = '#' + (mat as unknown as { color: Color }).color.getHexString();
-      }
-
-      // Map texture
-      if ('map' in mat) {
-        const map = (mat as unknown as { map: { name?: string; uuid?: string } | null }).map;
-        if (map) {
-          matInspection.map = map.name || map.uuid || 'unnamed';
+        // Color (most materials have it)
+        if ('color' in mat && (mat as unknown as { color: Color }).color instanceof Color) {
+          matInspection.color = '#' + (mat as unknown as { color: Color }).color.getHexString();
         }
-      }
 
-      // ShaderMaterial uniforms
-      if ('uniforms' in mat) {
-        const uniforms = (mat as unknown as { uniforms: Record<string, { value: unknown }> })
-          .uniforms;
-        matInspection.uniforms = {};
-        for (const [key, uniform] of Object.entries(uniforms)) {
-          // Store a safe representation of the value
-          const val = uniform.value;
-          if (val === null || val === undefined) {
-            matInspection.uniforms[key] = val;
-          } else if (typeof val === 'number' || typeof val === 'boolean' || typeof val === 'string') {
-            matInspection.uniforms[key] = val;
-          } else if (typeof val === 'object' && 'toArray' in val) {
-            matInspection.uniforms[key] = (val as { toArray(): number[] }).toArray();
-          } else {
-            matInspection.uniforms[key] = `[${typeof val}]`;
+        // Map texture
+        if ('map' in mat) {
+          const map = (mat as unknown as { map: { name?: string; uuid?: string } | null }).map;
+          if (map) {
+            matInspection.map = map.name || map.uuid || 'unnamed';
           }
         }
-      }
 
-      inspection.material = matInspection;
+        // ShaderMaterial uniforms
+        if ('uniforms' in mat) {
+          const uniforms = (mat as unknown as { uniforms: Record<string, { value: unknown }> })
+            .uniforms;
+          matInspection.uniforms = {};
+          for (const [key, uniform] of Object.entries(uniforms)) {
+            const val = uniform.value;
+            if (val === null || val === undefined) {
+              matInspection.uniforms[key] = val;
+            } else if (typeof val === 'number' || typeof val === 'boolean' || typeof val === 'string') {
+              matInspection.uniforms[key] = val;
+            } else if (typeof val === 'object' && 'toArray' in val) {
+              matInspection.uniforms[key] = (val as { toArray(): number[] }).toArray();
+            } else {
+              matInspection.uniforms[key] = `[${typeof val}]`;
+            }
+          }
+        }
+
+        inspection.material = matInspection;
+      }
     }
+  } catch {
+    r3fLog('store', `inspectObject: material inspection failed for "${obj.name || obj.uuid}"`);
   }
 
   return inspection;
@@ -266,16 +304,26 @@ export class ObjectStore {
     }
 
     this._emit({ type: 'add', object: obj, metadata: meta });
+    if (meta.testId) {
+      r3fLog('store', `Registered "${meta.testId}" (${meta.type})`);
+    }
     return meta;
   }
 
   /**
    * Register an entire subtree (object + all descendants).
+   * Individual objects that fail to register are skipped (logged when debug
+   * is enabled) so that one bad object doesn't prevent the rest from being
+   * tracked.
    */
   registerTree(root: Object3D): void {
     this._trackedRoots.add(root);
     root.traverse((obj) => {
-      this.register(obj);
+      try {
+        this.register(obj);
+      } catch (err) {
+        r3fLog('store', `registerTree: failed to register "${obj.name || obj.uuid}"`, err);
+      }
     });
   }
 
@@ -305,6 +353,9 @@ export class ObjectStore {
       }
     }
 
+    if (meta.testId) {
+      r3fLog('store', `Unregistered "${meta.testId}" (${meta.type})`);
+    }
     this._emit({ type: 'remove', object: obj, metadata: meta });
   }
 
@@ -325,16 +376,25 @@ export class ObjectStore {
   /**
    * Refresh Tier 1 metadata from the live Three.js object.
    * Returns true if any values changed.
+   * Returns false (no change) if extracting metadata throws so that the
+   * previous metadata is preserved.
    */
   update(obj: Object3D): boolean {
     const prev = this._metaByObject.get(obj);
     if (!prev) return false;
 
-    const curr = extractMetadata(obj);
+    let curr: ObjectMetadata;
+    try {
+      curr = extractMetadata(obj);
+    } catch (err) {
+      r3fLog('store', `update: extractMetadata failed for "${obj.name || obj.uuid}"`, err);
+      return false;
+    }
 
     if (hasChanged(prev, curr)) {
       // Update indexes if testId or name changed
       if (prev.testId !== curr.testId) {
+        r3fLog('store', `testId changed: "${prev.testId}" → "${curr.testId}" (${curr.type})`);
         if (prev.testId) this._objectsByTestId.delete(prev.testId);
         if (curr.testId) this._objectsByTestId.set(curr.testId, obj);
       }

@@ -63,3 +63,13 @@ export interface SceneSnapshot {
   objectCount: number;
   tree: SnapshotNode;
 }
+
+// ---------------------------------------------------------------------------
+// Window augmentation for page.evaluate calls
+// ---------------------------------------------------------------------------
+
+declare global {
+  interface Window {
+    __R3F_DOM_DEBUG__?: boolean;
+  }
+}

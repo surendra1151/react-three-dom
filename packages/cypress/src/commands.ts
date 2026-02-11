@@ -1,5 +1,5 @@
 /// <reference types="cypress" />
-import type { R3FDOM } from './types';
+import type { R3FDOM, SnapshotNode } from './types';
 
 // ---------------------------------------------------------------------------
 // Helper to get the R3F DOM bridge from the current window
@@ -16,10 +16,57 @@ function getR3F(win: Cypress.AUTWindow): R3FDOM {
 }
 
 // ---------------------------------------------------------------------------
+// Scene tree formatter — used by r3fLogScene
+// ---------------------------------------------------------------------------
+
+function formatCypressSceneTree(node: SnapshotNode, prefix = '', isLast = true): string {
+  const connector = prefix === '' ? '' : isLast ? '└─ ' : '├─ ';
+  const childPrefix = prefix === '' ? '' : prefix + (isLast ? '   ' : '│  ');
+
+  let label = node.type;
+  if (node.name) label += ` "${node.name}"`;
+  if (node.testId) label += ` [testId: ${node.testId}]`;
+  label += node.visible ? ' visible' : ' HIDDEN';
+
+  let result = prefix + connector + label + '\n';
+
+  for (let i = 0; i < node.children.length; i++) {
+    const child = node.children[i];
+    const last = i === node.children.length - 1;
+    result += formatCypressSceneTree(child, childPrefix, last);
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Custom commands — all prefixed with `r3f` for clarity
 // ---------------------------------------------------------------------------
 
 export function registerCommands(): void {
+  // ---- Debug logging ----
+  Cypress.Commands.add('r3fEnableDebug', () => {
+    cy.window({ log: false }).then((win) => {
+      (win as Window).__R3F_DOM_DEBUG__ = true;
+    });
+    // Mirror [r3f-dom:*] browser console messages to the Cypress command log
+    Cypress.on('window:before:load', (win) => {
+      const origLog = win.console.log;
+      win.console.log = (...args: unknown[]) => {
+        origLog.apply(win.console, args);
+        const text = String(args[0]);
+        if (text.startsWith('[r3f-dom:')) {
+          Cypress.log({
+            name: 'r3f-dom',
+            message: args.slice(1).map(String).join(' '),
+            consoleProps: () => ({ raw: args }),
+          });
+        }
+      };
+    });
+  });
+
+  // ---- Interactions ----
   Cypress.Commands.add('r3fClick', (idOrUuid: string) => {
     cy.window({ log: false }).then((win) => {
       getR3F(win).click(idOrUuid);
@@ -48,7 +95,7 @@ export function registerCommands(): void {
     'r3fDrag',
     (idOrUuid: string, delta: { x: number; y: number; z: number }) => {
       cy.window({ log: false }).then((win) => {
-        getR3F(win).drag(idOrUuid, delta);
+        return getR3F(win).drag(idOrUuid, delta);
       });
     },
   );
@@ -80,6 +127,27 @@ export function registerCommands(): void {
     });
   });
 
+  // ---- Diagnostics ----
+  Cypress.Commands.add('r3fLogScene', () => {
+    return cy.window({ log: false }).then((win) => {
+      const api = getR3F(win);
+      const snap = api.snapshot();
+      const lines = formatCypressSceneTree(snap.tree);
+      const output = `Scene tree (${snap.objectCount} objects):\n${lines}`;
+
+      Cypress.log({
+        name: 'r3fLogScene',
+        message: `${snap.objectCount} objects`,
+        consoleProps: () => ({ snapshot: snap, tree: output }),
+      });
+
+      // Also log to browser console for visibility
+      // eslint-disable-next-line no-console
+      console.log(`[r3f-dom] ${output}`);
+    });
+  });
+
+  // ---- Queries ----
   Cypress.Commands.add('r3fGetObject', (idOrUuid: string) => {
     return cy.window({ log: false }).then((win) => {
       const api = getR3F(win);

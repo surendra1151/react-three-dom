@@ -5,6 +5,8 @@
 import type { ObjectMetadata, ObjectInspection, SceneSnapshot } from './types';
 
 interface R3FDOM {
+  _ready: boolean;
+  _error?: string;
   getByTestId(id: string): ObjectMetadata | null;
   getByUuid(uuid: string): ObjectMetadata | null;
   getByName(name: string): ObjectMetadata[];
@@ -15,7 +17,7 @@ interface R3FDOM {
   doubleClick(idOrUuid: string): void;
   contextMenu(idOrUuid: string): void;
   hover(idOrUuid: string): void;
-  drag(idOrUuid: string, delta: { x: number; y: number; z: number }): void;
+  drag(idOrUuid: string, delta: { x: number; y: number; z: number }): Promise<void>;
   wheel(idOrUuid: string, options?: { deltaY?: number; deltaX?: number }): void;
   pointerMiss(): void;
   select(idOrUuid: string): void;

@@ -57,6 +57,61 @@ export async function waitForSceneReady(
 }
 
 // ---------------------------------------------------------------------------
+// waitForObject — wait for bridge + a specific object (when count never stabilizes)
+// ---------------------------------------------------------------------------
+
+export interface WaitForObjectOptions {
+  /** Time to wait for the bridge to appear. Default: 30_000 */
+  bridgeTimeout?: number;
+  /** Time to wait for the object to appear after bridge is ready. Default: 40_000 */
+  objectTimeout?: number;
+  /** Poll interval in ms. Default: 200 */
+  pollIntervalMs?: number;
+}
+
+/**
+ * Wait until `window.__R3F_DOM__` is available and an object with the given
+ * testId or uuid exists in the scene.
+ *
+ * Use this instead of `waitForSceneReady` when the scene object count never
+ * stabilizes (e.g. continuous loading, animations adding/removing objects,
+ * or GLTF/models loading asynchronously).
+ */
+export async function waitForObject(
+  page: Page,
+  idOrUuid: string,
+  options: WaitForObjectOptions = {},
+): Promise<void> {
+  const {
+    bridgeTimeout = 30_000,
+    objectTimeout = 40_000,
+    pollIntervalMs = 200,
+  } = options;
+
+  await page.waitForFunction(() => typeof window.__R3F_DOM__ !== 'undefined', undefined, {
+    timeout: bridgeTimeout,
+  });
+
+  const deadline = Date.now() + objectTimeout;
+  while (Date.now() < deadline) {
+    const found = await page.evaluate(
+      (id) => {
+        const api = window.__R3F_DOM__;
+        if (!api) return false;
+        return (api.getByTestId(id) ?? api.getByUuid(id)) !== null;
+      },
+      idOrUuid,
+    );
+    if (found) return;
+    await page.waitForTimeout(pollIntervalMs);
+  }
+
+  throw new Error(
+    `waitForObject("${idOrUuid}") timed out after ${objectTimeout}ms. Is the object rendered with userData.testId or this uuid?`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // waitForIdle — wait until no property changes for N consecutive frames
 // ---------------------------------------------------------------------------
 

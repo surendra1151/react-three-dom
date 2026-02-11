@@ -3,6 +3,7 @@ import { dispatchHover, dispatchUnhover } from './dispatch';
 import { verifyRaycastHit } from './raycastVerify';
 import { resolveObject, getCamera, getRenderer, getCanvasSize } from './resolve';
 import type { RaycastResult } from './raycastVerify';
+import { r3fLog } from '../debug';
 
 // ---------------------------------------------------------------------------
 // hover3D — deterministic hover on a 3D object
@@ -61,6 +62,7 @@ export function hover3D(
   const camera = getCamera();
   const gl = getRenderer();
   const size = getCanvasSize();
+  r3fLog('hover', `hover3D("${idOrUuid}") — resolving projection`);
 
   // 2. Project to screen
   const projection = projectToScreen(obj, camera, size);

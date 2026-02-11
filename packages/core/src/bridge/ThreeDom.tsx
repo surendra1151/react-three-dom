@@ -16,6 +16,7 @@ import { setInteractionState, clearInteractionState } from '../interactions/reso
 import { SelectionManager } from '../highlight/SelectionManager';
 import { Highlighter } from '../highlight/Highlighter';
 import { version } from '../version';
+import { r3fLog, enableDebug } from '../debug';
 import type { R3FDOM } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,8 @@ export interface ThreeDomProps {
   initialDepth?: number;
   /** Disable all sync. Default: true */
   enabled?: boolean;
+  /** Enable debug logging to browser console. Default: false */
+  debug?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +133,7 @@ function projectToScreenRect(
 
 function exposeGlobalAPI(store: ObjectStore): void {
   const api: R3FDOM = {
+    _ready: true,
     getByTestId: (id: string) => store.getByTestId(id),
     getByUuid: (uuid: string) => store.getByUuid(uuid),
     getByName: (name: string) => store.getByName(name),
@@ -140,7 +144,7 @@ function exposeGlobalAPI(store: ObjectStore): void {
     doubleClick: (idOrUuid: string) => { doubleClick3D(idOrUuid); },
     contextMenu: (idOrUuid: string) => { contextMenu3D(idOrUuid); },
     hover: (idOrUuid: string) => { hover3D(idOrUuid); },
-    drag: (idOrUuid: string, delta: { x: number; y: number; z: number }) => { void drag3D(idOrUuid, delta); },
+    drag: async (idOrUuid: string, delta: { x: number; y: number; z: number }) => { await drag3D(idOrUuid, delta); },
     wheel: (idOrUuid: string, options?: { deltaY?: number; deltaX?: number }) => { wheel3D(idOrUuid, options); },
     pointerMiss: () => { pointerMiss3D(); },
     select: (idOrUuid: string) => {
@@ -154,8 +158,28 @@ function exposeGlobalAPI(store: ObjectStore): void {
   window.__R3F_DOM__ = api;
 }
 
-function removeGlobalAPI(): void {
-  delete window.__R3F_DOM__;
+/**
+ * Remove the global API. In React Strict Mode the component unmounts then
+ * remounts; if we delete synchronously, the next effect has not run yet and
+ * tests waiting for __R3F_DOM__ can miss it. Defer deletion so that a
+ * remounted instance can set the bridge first; we only delete if it's still ours.
+ */
+function removeGlobalAPI(onlyIfEquals?: R3FDOM): void {
+  r3fLog('bridge', 'removeGlobalAPI called (deferred)');
+  if (onlyIfEquals !== undefined) {
+    const ref = onlyIfEquals;
+    queueMicrotask(() => {
+      if ((window as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__ === ref) {
+        delete (window as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+        r3fLog('bridge', 'Global API removed');
+      } else {
+        r3fLog('bridge', 'Global API not removed — replaced by new instance (Strict Mode remount)');
+      }
+    });
+  } else {
+    delete (window as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+    r3fLog('bridge', 'Global API removed (immediate)');
+  }
 }
 
 /** Set element position/size, only writing if values changed. */
@@ -184,6 +208,7 @@ export function ThreeDom({
   maxDomNodes = 2000,
   initialDepth = 3,
   enabled = true,
+  debug = false,
 }: ThreeDomProps = {}) {
   const scene = useThree((s) => s.scene);
   const camera = useThree((s) => s.camera);
@@ -198,6 +223,9 @@ export function ThreeDom({
 
   useEffect(() => {
     if (!enabled) return;
+
+    if (debug) enableDebug(true);
+    r3fLog('setup', 'ThreeDom effect started', { enabled, debug, root, maxDomNodes });
 
     const canvas = gl.domElement;
     const canvasParent = canvas.parentElement!;
@@ -235,69 +263,113 @@ export function ThreeDom({
       'z-index: 10',
     ].join(';');
 
-    // ---- Create store and mirror ----
-    const store = new ObjectStore();
-    const mirror = new DomMirror(store, maxDomNodes);
-    mirror.setRoot(rootElement);
+    // Variables declared outside try so cleanup can access them
+    let store: ObjectStore | null = null;
+    let mirror: DomMirror | null = null;
+    let unpatch: (() => void) | null = null;
+    let selectionManager: SelectionManager | null = null;
+    let currentApi: R3FDOM | undefined;
 
-    ensureCustomElements(store);
-    store.registerTree(scene);
-    mirror.materializeSubtree(scene.uuid, initialDepth);
+    try {
+      // ---- Create store and mirror ----
+      store = new ObjectStore();
+      mirror = new DomMirror(store, maxDomNodes);
+      mirror.setRoot(rootElement);
+      r3fLog('setup', 'Store and mirror created');
 
-    const unpatch = patchObject3D(store, mirror);
-    setInteractionState(store, camera, gl, size);
+      ensureCustomElements(store);
+      store.registerTree(scene);
+      r3fLog('setup', `Registered scene tree: ${store.getCount()} objects`);
 
-    // Keep SelectionManager available for the global API and Inspector
-    const selectionManager = new SelectionManager();
-    _selectionManager = selectionManager;
-    _highlighter = null;
+      mirror.materializeSubtree(scene.uuid, initialDepth);
 
-    exposeGlobalAPI(store);
-    _store = store;
-    _mirror = mirror;
+      unpatch = patchObject3D(store, mirror);
+      setInteractionState(store, camera, gl, size);
+      r3fLog('setup', 'Object3D patched, interaction state set');
 
-    // ---- Initial full position sync ----
-    const initialCanvasRect = canvas.getBoundingClientRect();
-    const allObjects = store.getFlatList();
-    for (const obj of allObjects) {
-      if (obj.userData?.__r3fdom_internal) continue;
-      const el = mirror.getElement(obj.uuid);
-      if (!el) continue;
+      // Keep SelectionManager available for the global API and Inspector
+      selectionManager = new SelectionManager();
+      _selectionManager = selectionManager;
+      _highlighter = null;
 
-      if (obj.type === 'Scene') {
-        setElementRect(el, 0, 0, Math.round(initialCanvasRect.width), Math.round(initialCanvasRect.height));
-        continue;
-      }
+      exposeGlobalAPI(store);
+      r3fLog('bridge', 'exposeGlobalAPI called — bridge is live, _ready=true');
+      currentApi = window.__R3F_DOM__;
+      _store = store;
+      _mirror = mirror;
 
-      const rect = projectToScreenRect(obj, camera, initialCanvasRect);
-      if (rect) {
-        let parentLeft = 0;
-        let parentTop = 0;
-        if (obj.parent && obj.parent.type !== 'Scene') {
-          const parentRect = projectToScreenRect(obj.parent, camera, initialCanvasRect);
-          if (parentRect) {
-            parentLeft = Math.round(parentRect.left);
-            parentTop = Math.round(parentRect.top);
-          }
+      // ---- Initial full position sync ----
+      const initialCanvasRect = canvas.getBoundingClientRect();
+      const allObjects = store.getFlatList();
+      for (const obj of allObjects) {
+        if (obj.userData?.__r3fdom_internal) continue;
+        const el = mirror.getElement(obj.uuid);
+        if (!el) continue;
+
+        if (obj.type === 'Scene') {
+          setElementRect(el, 0, 0, Math.round(initialCanvasRect.width), Math.round(initialCanvasRect.height));
+          continue;
         }
-        setElementRect(
-          el,
-          Math.round(rect.left) - parentLeft,
-          Math.round(rect.top) - parentTop,
-          Math.round(rect.width),
-          Math.round(rect.height),
-        );
+
+        const rect = projectToScreenRect(obj, camera, initialCanvasRect);
+        if (rect) {
+          let parentLeft = 0;
+          let parentTop = 0;
+          if (obj.parent && obj.parent.type !== 'Scene') {
+            const parentRect = projectToScreenRect(obj.parent, camera, initialCanvasRect);
+            if (parentRect) {
+              parentLeft = Math.round(parentRect.left);
+              parentTop = Math.round(parentRect.top);
+            }
+          }
+          setElementRect(
+            el,
+            Math.round(rect.left) - parentLeft,
+            Math.round(rect.top) - parentTop,
+            Math.round(rect.width),
+            Math.round(rect.height),
+          );
+        }
       }
+    } catch (err) {
+      // Setup failed — expose a non-ready bridge so tests get a clear error
+      // instead of a timeout with no diagnostics.
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      r3fLog('setup', 'ThreeDom setup failed', err);
+      console.error('[react-three-dom] Setup failed:', err);
+      window.__R3F_DOM__ = {
+        _ready: false,
+        _error: errorMsg,
+        getByTestId: () => null,
+        getByUuid: () => null,
+        getByName: () => [],
+        getCount: () => 0,
+        snapshot: () => ({ timestamp: 0, objectCount: 0, tree: { uuid: '', name: '', type: 'Scene', visible: true, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], children: [] } }),
+        inspect: () => null,
+        click: () => {},
+        doubleClick: () => {},
+        contextMenu: () => {},
+        hover: () => {},
+        drag: async () => {},
+        wheel: () => {},
+        pointerMiss: () => {},
+        select: () => {},
+        clearSelection: () => {},
+        getObject3D: () => null,
+        version,
+      };
+      currentApi = window.__R3F_DOM__;
     }
 
     // ---- Cleanup ----
     return () => {
-      unpatch();
-      removeGlobalAPI();
+      r3fLog('setup', 'ThreeDom cleanup started');
+      if (unpatch) unpatch();
+      removeGlobalAPI(currentApi);
       clearInteractionState();
-      selectionManager.dispose();
-      mirror.dispose();
-      store.dispose();
+      if (selectionManager) selectionManager.dispose();
+      if (mirror) mirror.dispose();
+      if (store) store.dispose();
       if (createdRoot && rootElement?.parentNode) {
         rootElement.parentNode.removeChild(rootElement);
       }
@@ -305,8 +377,10 @@ export function ThreeDom({
       _mirror = null;
       _selectionManager = null;
       _highlighter = null;
+      if (debug) enableDebug(false);
+      r3fLog('setup', 'ThreeDom cleanup complete');
     };
-  }, [scene, camera, gl, size, enabled, root, maxDomNodes, initialDepth]);
+  }, [scene, camera, gl, size, enabled, root, maxDomNodes, initialDepth, debug]);
 
   // -----------------------------------------------------------------------
   // Per-frame sync
@@ -315,6 +389,7 @@ export function ThreeDom({
   useFrame(() => {
     if (!enabled || !_store || !_mirror) return;
 
+    try {
     setInteractionState(_store, camera, gl, size);
 
     const store = _store;
@@ -386,6 +461,11 @@ export function ThreeDom({
         }
       }
       positionCursorRef.current = posEnd >= objects.length ? 0 : posEnd;
+    }
+    } catch (err) {
+      // Per-frame sync failure should not crash the render loop.
+      // Log once and continue — the next frame will retry.
+      r3fLog('sync', 'Per-frame sync error', err);
     }
   });
 

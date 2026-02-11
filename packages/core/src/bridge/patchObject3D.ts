@@ -1,6 +1,7 @@
 import { Object3D } from 'three';
 import type { ObjectStore } from '../store/ObjectStore';
 import type { DomMirror } from '../mirror/DomMirror';
+import { r3fLog } from '../debug';
 
 // ---------------------------------------------------------------------------
 // Object3D.add / Object3D.remove monkey-patch
@@ -71,6 +72,7 @@ export function patchObject3D(
 
   // Only patch the prototype once (supports multiple store/mirror pairs)
   if (!_patched) {
+    r3fLog('patch', 'Patching Object3D.prototype.add and .remove');
     _originalAdd = Object3D.prototype.add;
     _originalRemove = Object3D.prototype.remove;
 
@@ -87,8 +89,18 @@ export function patchObject3D(
         for (const obj of objects) {
           // Skip if it's the object adding itself (Three.js guard)
           if (obj === this) continue;
-          registerSubtree(obj, pair.store, pair.mirror);
+          try {
+            r3fLog('patch', `patchedAdd: "${obj.name || obj.type}" added to "${this.name || this.type}"`);
+            registerSubtree(obj, pair.store, pair.mirror);
+          } catch (err) {
+            r3fLog('patch', `patchedAdd: failed to register "${obj.name || obj.type}"`, err);
+          }
         }
+        // Immediately update the parent's metadata (so childrenUuids is
+        // current for any snapshot() call in the same frame) and also mark
+        // it dirty for the DOM position sync on the next useFrame.
+        pair.store.update(this);
+        pair.store.markDirty(this);
       }
 
       return this;
@@ -105,15 +117,25 @@ export function patchObject3D(
       if (pair) {
         for (const obj of objects) {
           if (obj === this) continue;
+          try {
+            r3fLog('patch', `patchedRemove: "${obj.name || obj.type}" removed from "${this.name || this.type}"`);
 
-          // Notify mirror first (it needs to traverse for DOM cleanup)
-          pair.mirror.onObjectRemoved(obj);
+            // Notify mirror first (it needs to traverse for DOM cleanup)
+            pair.mirror.onObjectRemoved(obj);
 
-          // Then unregister from store (traverses descendants)
-          obj.traverse((child) => {
-            pair.store.unregister(child);
-          });
+            // Then unregister from store (traverses descendants)
+            obj.traverse((child) => {
+              pair.store.unregister(child);
+            });
+          } catch (err) {
+            r3fLog('patch', `patchedRemove: failed to unregister "${obj.name || obj.type}"`, err);
+          }
         }
+        // Immediately update the parent's metadata (so childrenUuids is
+        // current for any snapshot() call in the same frame) and also mark
+        // it dirty for the DOM position sync on the next useFrame.
+        pair.store.update(this);
+        pair.store.markDirty(this);
       }
 
       // Call the original remove
@@ -148,6 +170,7 @@ export function patchObject3D(
  */
 export function restoreObject3D(): void {
   if (!_patched) return;
+  r3fLog('patch', 'Restoring original Object3D.prototype.add and .remove');
 
   if (_originalAdd) {
     Object3D.prototype.add = _originalAdd;

@@ -2,6 +2,7 @@ import { Vector3 } from 'three';
 import { projectToScreen, screenDeltaToWorld } from './projection';
 import { dispatchDrag, type DragOptions } from './dispatch';
 import { resolveObject, getCamera, getRenderer, getCanvasSize } from './resolve';
+import { r3fLog } from '../debug';
 
 // ---------------------------------------------------------------------------
 // drag3D — deterministic drag on a 3D object
@@ -82,6 +83,7 @@ export async function drag3D(
   const camera = getCamera();
   const gl = getRenderer();
   const size = getCanvasSize();
+  r3fLog('drag', `drag3D("${idOrUuid}") mode=${mode}`, delta);
 
   // 2. Project start point
   const projection = projectToScreen(obj, camera, size);

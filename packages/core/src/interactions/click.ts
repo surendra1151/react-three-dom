@@ -3,6 +3,7 @@ import { dispatchClick, dispatchDoubleClick, dispatchContextMenu } from './dispa
 import { verifyRaycastHit } from './raycastVerify';
 import { resolveObject, getCamera, getRenderer, getCanvasSize } from './resolve';
 import type { RaycastResult } from './raycastVerify';
+import { r3fLog } from '../debug';
 
 // ---------------------------------------------------------------------------
 // click3D — deterministic click on a 3D object
@@ -67,6 +68,7 @@ export function click3D(
   const camera = getCamera();
   const gl = getRenderer();
   const size = getCanvasSize();
+  r3fLog('click', `click3D("${idOrUuid}") — resolving projection`);
 
   // 2. Project to screen
   const projection = projectToScreen(obj, camera, size);

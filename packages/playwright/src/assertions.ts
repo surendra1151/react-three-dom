@@ -1,211 +1,653 @@
 import { expect as baseExpect } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import type { ObjectMetadata, ObjectInspection } from './types';
 
 // ---------------------------------------------------------------------------
 // Custom Playwright expect matchers for 3D scene testing
+//
+// Every matcher auto-retries until the assertion passes or the timeout
+// expires, matching Playwright's built-in assertion behaviour.
+//
+// All 21 matchers:
+//  Tier 1 (metadata): toExist, toBeVisible, toHavePosition, toHaveRotation,
+//    toHaveScale, toHaveType, toHaveName, toHaveGeometryType,
+//    toHaveMaterialType, toHaveChildCount, toHaveParent,
+//    toHaveInstanceCount
+//  Tier 2 (inspection): toBeInFrustum, toHaveBounds, toHaveColor,
+//    toHaveOpacity, toBeTransparent, toHaveVertexCount,
+//    toHaveTriangleCount, toHaveUserData, toHaveMapTexture
 // ---------------------------------------------------------------------------
 
-/**
- * Extend Playwright's `expect` with 3D-native matchers.
- *
- * Usage:
- * ```ts
- * import { test, expect } from '@react-three-dom/playwright';
- *
- * test('chair exists', async ({ page, r3f }) => {
- *   await r3f.waitForSceneReady();
- *   await expect(r3f).toExist('chair-primary');
- * });
- * ```
- */
-export const expect = baseExpect.extend({
-  // -----------------------------------------------------------------------
-  // toExist — verify an object with the given testId/uuid exists in the scene
-  // -----------------------------------------------------------------------
-  async toExist(r3f: R3FMatcherReceiver, idOrUuid: string) {
-    const meta = await r3f.getObject(idOrUuid);
-    const pass = meta !== null;
-
-    return {
-      pass,
-      message: () =>
-        pass
-          ? `Expected object "${idOrUuid}" to NOT exist in the scene, but it does`
-          : `Expected object "${idOrUuid}" to exist in the scene, but it was not found`,
-      name: 'toExist',
-      expected: idOrUuid,
-      actual: meta,
-    };
-  },
-
-  // -----------------------------------------------------------------------
-  // toBeVisible — verify an object is visible (object.visible === true)
-  // -----------------------------------------------------------------------
-  async toBeVisible(r3f: R3FMatcherReceiver, idOrUuid: string) {
-    const meta = await r3f.getObject(idOrUuid);
-    if (!meta) {
-      return {
-        pass: false,
-        message: () => `Expected object "${idOrUuid}" to be visible, but it was not found in the scene`,
-        name: 'toBeVisible',
-      };
-    }
-
-    const pass = meta.visible;
-    return {
-      pass,
-      message: () =>
-        pass
-          ? `Expected object "${idOrUuid}" to NOT be visible, but it is`
-          : `Expected object "${idOrUuid}" to be visible, but visible=${meta.visible}`,
-      name: 'toBeVisible',
-      expected: true,
-      actual: meta.visible,
-    };
-  },
-
-  // -----------------------------------------------------------------------
-  // toBeInFrustum — verify an object's bounding box intersects the camera
-  // frustum (i.e. it is potentially on-screen). Uses inspect() for bounds.
-  // -----------------------------------------------------------------------
-  async toBeInFrustum(r3f: R3FMatcherReceiver, idOrUuid: string) {
-    const inspection = await r3f.inspect(idOrUuid);
-    if (!inspection) {
-      return {
-        pass: false,
-        message: () =>
-          `Expected object "${idOrUuid}" to be in frustum, but it was not found in the scene`,
-        name: 'toBeInFrustum',
-      };
-    }
-
-    // If the bridge can project it to screen, it's in the frustum.
-    // We check by verifying bounds exist and are finite.
-    const { bounds } = inspection;
-    const isFinite = (v: number[]) => v.every(Number.isFinite);
-    const pass = isFinite(bounds.min) && isFinite(bounds.max);
-
-    return {
-      pass,
-      message: () =>
-        pass
-          ? `Expected object "${idOrUuid}" to NOT be in the camera frustum`
-          : `Expected object "${idOrUuid}" to be in the camera frustum, but its bounds are invalid`,
-      name: 'toBeInFrustum',
-      expected: 'finite bounds',
-      actual: bounds,
-    };
-  },
-
-  // -----------------------------------------------------------------------
-  // toHavePosition — verify object position within tolerance
-  // -----------------------------------------------------------------------
-  async toHavePosition(
-    r3f: R3FMatcherReceiver,
-    idOrUuid: string,
-    expected: [number, number, number],
-    tolerance = 0.01,
-  ) {
-    const meta = await r3f.getObject(idOrUuid);
-    if (!meta) {
-      return {
-        pass: false,
-        message: () =>
-          `Expected object "${idOrUuid}" to have position [${expected}], but it was not found`,
-        name: 'toHavePosition',
-      };
-    }
-
-    const [ex, ey, ez] = expected;
-    const [ax, ay, az] = meta.position;
-    const dx = Math.abs(ax - ex);
-    const dy = Math.abs(ay - ey);
-    const dz = Math.abs(az - ez);
-    const pass = dx <= tolerance && dy <= tolerance && dz <= tolerance;
-
-    return {
-      pass,
-      message: () =>
-        pass
-          ? `Expected object "${idOrUuid}" to NOT be at position [${expected}] (±${tolerance})`
-          : `Expected object "${idOrUuid}" to be at position [${expected}] (±${tolerance}), but it is at [${meta.position}] (delta: [${dx.toFixed(4)}, ${dy.toFixed(4)}, ${dz.toFixed(4)}])`,
-      name: 'toHavePosition',
-      expected,
-      actual: meta.position,
-    };
-  },
-
-  // -----------------------------------------------------------------------
-  // toHaveBounds — verify object bounding box (world-space)
-  // -----------------------------------------------------------------------
-  async toHaveBounds(
-    r3f: R3FMatcherReceiver,
-    idOrUuid: string,
-    expected: { min: [number, number, number]; max: [number, number, number] },
-    tolerance = 0.1,
-  ) {
-    const inspection = await r3f.inspect(idOrUuid);
-    if (!inspection) {
-      return {
-        pass: false,
-        message: () =>
-          `Expected object "${idOrUuid}" to have specific bounds, but it was not found`,
-        name: 'toHaveBounds',
-      };
-    }
-
-    const { bounds } = inspection;
-    const withinTolerance = (a: number[], b: number[]) =>
-      a.every((v, i) => Math.abs(v - b[i]) <= tolerance);
-    const pass = withinTolerance(bounds.min, expected.min) && withinTolerance(bounds.max, expected.max);
-
-    return {
-      pass,
-      message: () =>
-        pass
-          ? `Expected object "${idOrUuid}" to NOT have bounds min:${JSON.stringify(expected.min)} max:${JSON.stringify(expected.max)}`
-          : `Expected object "${idOrUuid}" to have bounds min:${JSON.stringify(expected.min)} max:${JSON.stringify(expected.max)}, but got min:${JSON.stringify(bounds.min)} max:${JSON.stringify(bounds.max)}`,
-      name: 'toHaveBounds',
-      expected,
-      actual: bounds,
-    };
-  },
-
-  // -----------------------------------------------------------------------
-  // toHaveInstanceCount — verify InstancedMesh instance count
-  // -----------------------------------------------------------------------
-  async toHaveInstanceCount(r3f: R3FMatcherReceiver, idOrUuid: string, expectedCount: number) {
-    const meta = await r3f.getObject(idOrUuid);
-    if (!meta) {
-      return {
-        pass: false,
-        message: () =>
-          `Expected object "${idOrUuid}" to have instance count ${expectedCount}, but it was not found`,
-        name: 'toHaveInstanceCount',
-      };
-    }
-
-    const actual = meta.instanceCount ?? 0;
-    const pass = actual === expectedCount;
-
-    return {
-      pass,
-      message: () =>
-        pass
-          ? `Expected object "${idOrUuid}" to NOT have instance count ${expectedCount}`
-          : `Expected object "${idOrUuid}" to have instance count ${expectedCount}, but it has ${actual}`,
-      name: 'toHaveInstanceCount',
-      expected: expectedCount,
-      actual,
-    };
-  },
-});
+const DEFAULT_TIMEOUT = 5_000;
+const DEFAULT_INTERVAL = 100;
 
 // ---------------------------------------------------------------------------
-// Helper type — the R3FFixture object that matchers receive
+// Helpers
 // ---------------------------------------------------------------------------
+
+async function fetchMeta(page: Page, id: string): Promise<ObjectMetadata | null> {
+  return page.evaluate((i) => {
+    const api = window.__R3F_DOM__;
+    if (!api) return null;
+    return api.getByTestId(i) ?? api.getByUuid(i) ?? null;
+  }, id);
+}
+
+async function fetchInsp(page: Page, id: string): Promise<ObjectInspection | null> {
+  return page.evaluate((i) => {
+    const api = window.__R3F_DOM__;
+    if (!api) return null;
+    return api.inspect(i);
+  }, id);
+}
 
 interface R3FMatcherReceiver {
+  page: Page;
   getObject(idOrUuid: string): Promise<ObjectMetadata | null>;
   inspect(idOrUuid: string): Promise<ObjectInspection | null>;
 }
+
+interface MatcherOptions {
+  timeout?: number;
+  interval?: number;
+}
+
+type Vec3Opts = MatcherOptions & { tolerance?: number };
+
+function parseTol(v: number | Vec3Opts | undefined, def: number) {
+  const o = typeof v === 'number' ? { tolerance: v } : (v ?? {});
+  return {
+    timeout: o.timeout ?? DEFAULT_TIMEOUT,
+    interval: o.interval ?? DEFAULT_INTERVAL,
+    tolerance: o.tolerance ?? def,
+  };
+}
+
+function notFound(name: string, id: string, detail: string, timeout: number) {
+  return {
+    pass: false,
+    message: () => `Expected object "${id}" ${detail}, but it was not found (waited ${timeout}ms)`,
+    name,
+  };
+}
+
+// ===========================================================================
+// Matchers
+// ===========================================================================
+
+export const expect = baseExpect.extend({
+
+  // ========================= TIER 1 — Metadata ============================
+
+  // --- toExist ---
+  async toExist(r3f: R3FMatcherReceiver, id: string, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        return meta !== null;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    const pass = meta !== null;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected object "${id}" to NOT exist, but it does`
+        : `Expected object "${id}" to exist, but it was not found (waited ${timeout}ms)`,
+      name: 'toExist', expected: id, actual: meta,
+    };
+  },
+
+  // --- toBeVisible ---
+  async toBeVisible(r3f: R3FMatcherReceiver, id: string, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        return meta?.visible ?? false;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toBeVisible', id, 'to be visible', timeout);
+    const m = meta as ObjectMetadata;
+    return {
+      pass: m.visible,
+      message: () => m.visible
+        ? `Expected "${id}" to NOT be visible, but it is`
+        : `Expected "${id}" to be visible, but visible=${m.visible} (waited ${timeout}ms)`,
+      name: 'toBeVisible', expected: true, actual: m.visible,
+    };
+  },
+
+  // --- toHavePosition ---
+  async toHavePosition(r3f: R3FMatcherReceiver, id: string, expected: [number, number, number], tolOpts?: number | Vec3Opts) {
+    const { timeout, interval, tolerance } = parseTol(tolOpts, 0.01);
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    let pass = false;
+    let delta: [number, number, number] = [0, 0, 0];
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        if (!meta) return false;
+        delta = [Math.abs(meta.position[0] - expected[0]), Math.abs(meta.position[1] - expected[1]), Math.abs(meta.position[2] - expected[2])];
+        pass = delta.every(d => d <= tolerance);
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toHavePosition', id, `to have position [${expected}]`, timeout);
+    const m = meta as ObjectMetadata;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT be at [${expected}] (±${tolerance})`
+        : `Expected "${id}" at [${expected}] (±${tolerance}), got [${m.position}] (Δ [${delta.map(d => d.toFixed(4))}]) (waited ${timeout}ms)`,
+      name: 'toHavePosition', expected, actual: m.position,
+    };
+  },
+
+  // --- toHaveRotation ---
+  async toHaveRotation(r3f: R3FMatcherReceiver, id: string, expected: [number, number, number], tolOpts?: number | Vec3Opts) {
+    const { timeout, interval, tolerance } = parseTol(tolOpts, 0.01);
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    let pass = false;
+    let delta: [number, number, number] = [0, 0, 0];
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        if (!meta) return false;
+        delta = [Math.abs(meta.rotation[0] - expected[0]), Math.abs(meta.rotation[1] - expected[1]), Math.abs(meta.rotation[2] - expected[2])];
+        pass = delta.every(d => d <= tolerance);
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toHaveRotation', id, `to have rotation [${expected}]`, timeout);
+    const m = meta as ObjectMetadata;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have rotation [${expected}] (±${tolerance})`
+        : `Expected "${id}" rotation [${expected}] (±${tolerance}), got [${m.rotation}] (Δ [${delta.map(d => d.toFixed(4))}]) (waited ${timeout}ms)`,
+      name: 'toHaveRotation', expected, actual: m.rotation,
+    };
+  },
+
+  // --- toHaveScale ---
+  async toHaveScale(r3f: R3FMatcherReceiver, id: string, expected: [number, number, number], tolOpts?: number | Vec3Opts) {
+    const { timeout, interval, tolerance } = parseTol(tolOpts, 0.01);
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    let pass = false;
+    let delta: [number, number, number] = [0, 0, 0];
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        if (!meta) return false;
+        delta = [Math.abs(meta.scale[0] - expected[0]), Math.abs(meta.scale[1] - expected[1]), Math.abs(meta.scale[2] - expected[2])];
+        pass = delta.every(d => d <= tolerance);
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toHaveScale', id, `to have scale [${expected}]`, timeout);
+    const m = meta as ObjectMetadata;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have scale [${expected}] (±${tolerance})`
+        : `Expected "${id}" scale [${expected}] (±${tolerance}), got [${m.scale}] (Δ [${delta.map(d => d.toFixed(4))}]) (waited ${timeout}ms)`,
+      name: 'toHaveScale', expected, actual: m.scale,
+    };
+  },
+
+  // --- toHaveType ---
+  async toHaveType(r3f: R3FMatcherReceiver, id: string, expectedType: string, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        if (!meta) return false;
+        pass = meta.type === expectedType;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toHaveType', id, `to have type "${expectedType}"`, timeout);
+    const m = meta as ObjectMetadata;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have type "${expectedType}"`
+        : `Expected "${id}" type "${expectedType}", got "${m.type}" (waited ${timeout}ms)`,
+      name: 'toHaveType', expected: expectedType, actual: m.type,
+    };
+  },
+
+  // --- toHaveName ---
+  async toHaveName(r3f: R3FMatcherReceiver, id: string, expectedName: string, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        if (!meta) return false;
+        pass = meta.name === expectedName;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toHaveName', id, `to have name "${expectedName}"`, timeout);
+    const m = meta as ObjectMetadata;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have name "${expectedName}"`
+        : `Expected "${id}" name "${expectedName}", got "${m.name}" (waited ${timeout}ms)`,
+      name: 'toHaveName', expected: expectedName, actual: m.name,
+    };
+  },
+
+  // --- toHaveGeometryType ---
+  async toHaveGeometryType(r3f: R3FMatcherReceiver, id: string, expectedGeo: string, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        if (!meta) return false;
+        pass = meta.geometryType === expectedGeo;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toHaveGeometryType', id, `to have geometry "${expectedGeo}"`, timeout);
+    const m = meta as ObjectMetadata;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have geometry "${expectedGeo}"`
+        : `Expected "${id}" geometry "${expectedGeo}", got "${m.geometryType ?? 'none'}" (waited ${timeout}ms)`,
+      name: 'toHaveGeometryType', expected: expectedGeo, actual: m.geometryType,
+    };
+  },
+
+  // --- toHaveMaterialType ---
+  async toHaveMaterialType(r3f: R3FMatcherReceiver, id: string, expectedMat: string, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        if (!meta) return false;
+        pass = meta.materialType === expectedMat;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toHaveMaterialType', id, `to have material "${expectedMat}"`, timeout);
+    const m = meta as ObjectMetadata;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have material "${expectedMat}"`
+        : `Expected "${id}" material "${expectedMat}", got "${m.materialType ?? 'none'}" (waited ${timeout}ms)`,
+      name: 'toHaveMaterialType', expected: expectedMat, actual: m.materialType,
+    };
+  },
+
+  // --- toHaveChildCount ---
+  async toHaveChildCount(r3f: R3FMatcherReceiver, id: string, expectedCount: number, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    let actual = 0;
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        if (!meta) return false;
+        actual = meta.childrenUuids.length;
+        return actual === expectedCount;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toHaveChildCount', id, `to have ${expectedCount} children`, timeout);
+    const pass = actual === expectedCount;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have ${expectedCount} children`
+        : `Expected "${id}" ${expectedCount} children, got ${actual} (waited ${timeout}ms)`,
+      name: 'toHaveChildCount', expected: expectedCount, actual,
+    };
+  },
+
+  // --- toHaveParent ---
+  async toHaveParent(r3f: R3FMatcherReceiver, id: string, expectedParent: string, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    let parentMeta: ObjectMetadata | null = null;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        if (!meta?.parentUuid) return false;
+        parentMeta = await fetchMeta(r3f.page, meta.parentUuid);
+        if (!parentMeta) return false;
+        pass = parentMeta.uuid === expectedParent || parentMeta.testId === expectedParent || parentMeta.name === expectedParent;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toHaveParent', id, `to have parent "${expectedParent}"`, timeout);
+    const m = meta as ObjectMetadata;
+    const pm = parentMeta as ObjectMetadata | null;
+    const parentLabel = pm?.testId ?? pm?.name ?? m.parentUuid;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have parent "${expectedParent}"`
+        : `Expected "${id}" parent "${expectedParent}", got "${parentLabel}" (waited ${timeout}ms)`,
+      name: 'toHaveParent', expected: expectedParent, actual: parentLabel,
+    };
+  },
+
+  // --- toHaveInstanceCount ---
+  async toHaveInstanceCount(r3f: R3FMatcherReceiver, id: string, expectedCount: number, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    let actual = 0;
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        actual = meta?.instanceCount ?? 0;
+        return actual === expectedCount;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toHaveInstanceCount', id, `to have instance count ${expectedCount}`, timeout);
+    const pass = actual === expectedCount;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have instance count ${expectedCount}`
+        : `Expected "${id}" instance count ${expectedCount}, got ${actual} (waited ${timeout}ms)`,
+      name: 'toHaveInstanceCount', expected: expectedCount, actual,
+    };
+  },
+
+  // ========================= TIER 2 — Inspection ==========================
+
+  // --- toBeInFrustum ---
+  async toBeInFrustum(r3f: R3FMatcherReceiver, id: string, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let insp: ObjectInspection | null = null;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        insp = await fetchInsp(r3f.page, id);
+        if (!insp) return false;
+        const fin = (v: number[]) => v.every(Number.isFinite);
+        pass = fin(insp.bounds.min) && fin(insp.bounds.max);
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!insp) return notFound('toBeInFrustum', id, 'to be in frustum', timeout);
+    const i = insp as ObjectInspection;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT be in the camera frustum`
+        : `Expected "${id}" in frustum, but bounds are invalid (waited ${timeout}ms)`,
+      name: 'toBeInFrustum', expected: 'finite bounds', actual: i.bounds,
+    };
+  },
+
+  // --- toHaveBounds ---
+  async toHaveBounds(
+    r3f: R3FMatcherReceiver, id: string,
+    expected: { min: [number, number, number]; max: [number, number, number] },
+    tolOpts?: number | Vec3Opts,
+  ) {
+    const { timeout, interval, tolerance } = parseTol(tolOpts, 0.1);
+    const isNot = this.isNot;
+    let insp: ObjectInspection | null = null;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        insp = await fetchInsp(r3f.page, id);
+        if (!insp) return false;
+        const w = (a: number[], b: number[]) => a.every((v, j) => Math.abs(v - b[j]) <= tolerance);
+        pass = w(insp.bounds.min, expected.min) && w(insp.bounds.max, expected.max);
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!insp) return notFound('toHaveBounds', id, 'to have specific bounds', timeout);
+    const i = insp as ObjectInspection;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have bounds min:${JSON.stringify(expected.min)} max:${JSON.stringify(expected.max)}`
+        : `Expected "${id}" bounds min:${JSON.stringify(expected.min)} max:${JSON.stringify(expected.max)}, got min:${JSON.stringify(i.bounds.min)} max:${JSON.stringify(i.bounds.max)} (waited ${timeout}ms)`,
+      name: 'toHaveBounds', expected, actual: i.bounds,
+    };
+  },
+
+  // --- toHaveColor ---
+  async toHaveColor(r3f: R3FMatcherReceiver, id: string, expectedColor: string, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    const norm = expectedColor.startsWith('#') ? expectedColor.toLowerCase() : `#${expectedColor.toLowerCase()}`;
+    let insp: ObjectInspection | null = null;
+    let actual: string | undefined;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        insp = await fetchInsp(r3f.page, id);
+        if (!insp?.material?.color) return false;
+        actual = insp.material.color.toLowerCase();
+        pass = actual === norm;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!insp) return notFound('toHaveColor', id, `to have color "${norm}"`, timeout);
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have color "${norm}"`
+        : `Expected "${id}" color "${norm}", got "${actual ?? 'no color'}" (waited ${timeout}ms)`,
+      name: 'toHaveColor', expected: norm, actual,
+    };
+  },
+
+  // --- toHaveOpacity ---
+  async toHaveOpacity(r3f: R3FMatcherReceiver, id: string, expectedOpacity: number, tolOpts?: number | Vec3Opts) {
+    const { timeout, interval, tolerance } = parseTol(tolOpts, 0.01);
+    const isNot = this.isNot;
+    let insp: ObjectInspection | null = null;
+    let actual: number | undefined;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        insp = await fetchInsp(r3f.page, id);
+        if (!insp?.material) return false;
+        actual = insp.material.opacity;
+        pass = actual !== undefined && Math.abs(actual - expectedOpacity) <= tolerance;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!insp) return notFound('toHaveOpacity', id, `to have opacity ${expectedOpacity}`, timeout);
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have opacity ${expectedOpacity} (±${tolerance})`
+        : `Expected "${id}" opacity ${expectedOpacity} (±${tolerance}), got ${actual ?? 'no material'} (waited ${timeout}ms)`,
+      name: 'toHaveOpacity', expected: expectedOpacity, actual,
+    };
+  },
+
+  // --- toBeTransparent ---
+  async toBeTransparent(r3f: R3FMatcherReceiver, id: string, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let insp: ObjectInspection | null = null;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        insp = await fetchInsp(r3f.page, id);
+        if (!insp?.material) return false;
+        pass = insp.material.transparent === true;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!insp) return notFound('toBeTransparent', id, 'to be transparent', timeout);
+    const i = insp as ObjectInspection;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT be transparent`
+        : `Expected "${id}" transparent=true, got ${i.material?.transparent ?? 'no material'} (waited ${timeout}ms)`,
+      name: 'toBeTransparent', expected: true, actual: i.material?.transparent,
+    };
+  },
+
+  // --- toHaveVertexCount ---
+  async toHaveVertexCount(r3f: R3FMatcherReceiver, id: string, expectedCount: number, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    let actual = 0;
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        actual = meta?.vertexCount ?? 0;
+        return actual === expectedCount;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toHaveVertexCount', id, `to have ${expectedCount} vertices`, timeout);
+    const pass = actual === expectedCount;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have ${expectedCount} vertices`
+        : `Expected "${id}" ${expectedCount} vertices, got ${actual} (waited ${timeout}ms)`,
+      name: 'toHaveVertexCount', expected: expectedCount, actual,
+    };
+  },
+
+  // --- toHaveTriangleCount ---
+  async toHaveTriangleCount(r3f: R3FMatcherReceiver, id: string, expectedCount: number, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let meta: ObjectMetadata | null = null;
+    let actual = 0;
+    try {
+      await baseExpect.poll(async () => {
+        meta = await fetchMeta(r3f.page, id);
+        actual = meta?.triangleCount ?? 0;
+        return actual === expectedCount;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!meta) return notFound('toHaveTriangleCount', id, `to have ${expectedCount} triangles`, timeout);
+    const pass = actual === expectedCount;
+    return {
+      pass,
+      message: () => pass
+        ? `Expected "${id}" to NOT have ${expectedCount} triangles`
+        : `Expected "${id}" ${expectedCount} triangles, got ${actual} (waited ${timeout}ms)`,
+      name: 'toHaveTriangleCount', expected: expectedCount, actual,
+    };
+  },
+
+  // --- toHaveUserData ---
+  async toHaveUserData(r3f: R3FMatcherReceiver, id: string, key: string, expectedValue?: unknown, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let insp: ObjectInspection | null = null;
+    let actual: unknown;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        insp = await fetchInsp(r3f.page, id);
+        if (!insp) return false;
+        if (!(key in insp.userData)) return false;
+        if (expectedValue === undefined) { pass = true; return true; }
+        actual = insp.userData[key];
+        pass = JSON.stringify(actual) === JSON.stringify(expectedValue);
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!insp) return notFound('toHaveUserData', id, `to have userData.${key}`, timeout);
+    return {
+      pass,
+      message: () => {
+        if (expectedValue === undefined) {
+          return pass
+            ? `Expected "${id}" to NOT have userData key "${key}"`
+            : `Expected "${id}" to have userData key "${key}", but missing (waited ${timeout}ms)`;
+        }
+        return pass
+          ? `Expected "${id}" to NOT have userData.${key} = ${JSON.stringify(expectedValue)}`
+          : `Expected "${id}" userData.${key} = ${JSON.stringify(expectedValue)}, got ${JSON.stringify(actual)} (waited ${timeout}ms)`;
+      },
+      name: 'toHaveUserData', expected: expectedValue ?? `key "${key}"`, actual,
+    };
+  },
+
+  // --- toHaveMapTexture ---
+  async toHaveMapTexture(r3f: R3FMatcherReceiver, id: string, expectedName?: string, opts?: MatcherOptions) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let insp: ObjectInspection | null = null;
+    let actual: string | undefined;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        insp = await fetchInsp(r3f.page, id);
+        if (!insp?.material?.map) return false;
+        actual = insp.material.map;
+        if (!expectedName) { pass = true; return true; }
+        pass = actual === expectedName;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!insp) return notFound('toHaveMapTexture', id, 'to have a map texture', timeout);
+    return {
+      pass,
+      message: () => {
+        if (!expectedName) {
+          return pass
+            ? `Expected "${id}" to NOT have a map texture`
+            : `Expected "${id}" to have a map texture, but none found (waited ${timeout}ms)`;
+        }
+        return pass
+          ? `Expected "${id}" to NOT have map "${expectedName}"`
+          : `Expected "${id}" map "${expectedName}", got "${actual ?? 'none'}" (waited ${timeout}ms)`;
+      },
+      name: 'toHaveMapTexture', expected: expectedName ?? 'any map', actual,
+    };
+  },
+});

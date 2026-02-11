@@ -59,10 +59,10 @@ export async function drag(
 ): Promise<void> {
   ensureBridge(page);
   await page.evaluate(
-    ([id, d]) => {
+    async ([id, d]) => {
       const api = window.__R3F_DOM__;
       if (!api) throw new Error('react-three-dom bridge not found. Is <ThreeDom> mounted?');
-      api.drag(id, d);
+      await api.drag(id, d);
     },
     [idOrUuid, delta] as const,
   );
