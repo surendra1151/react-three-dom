@@ -1,8 +1,8 @@
 {
   "name": "@react-three-dom/devtools",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Chrome DevTools extension — R3F scene inspector as a DevTools tab",
-  "private": true,
+  "files": ["dist", "manifest.json", "devtools.html", "devtools.js", "panel.html", "icons", "README.md", "PRIVACY.md"],
   "scripts": {
     "build": "pnpm run build:panel && pnpm run copy:manifest",
     "build:panel": "tsup",
