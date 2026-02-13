@@ -1,0 +1,23 @@
+{
+  "name": "@react-three-dom/devtools",
+  "version": "0.1.0",
+  "description": "Chrome DevTools extension — R3F scene inspector as a DevTools tab",
+  "private": true,
+  "scripts": {
+    "build": "pnpm run build:panel && pnpm run copy:manifest",
+    "build:panel": "tsup",
+    "copy:manifest": "node -e \"require('fs').cpSync('manifest.json', 'dist/manifest.json')\" && node -e \"require('fs').cpSync('devtools.html', 'dist/devtools.html')\" && node -e \"require('fs').cpSync('devtools.js', 'dist/devtools.js')\" && node -e \"require('fs').cpSync('panel.html', 'dist/panel.html')\" && node -e \"require('fs').mkdirSync('dist/icons', {recursive:true})\" && node -e \"require('fs').cpSync('icons/icon16.png', 'dist/icons/icon16.png')\" && node -e \"require('fs').cpSync('icons/icon48.png', 'dist/icons/icon48.png')\"",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "react": "^18",
+    "react-dom": "^18"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "typescript": "^5.7",
+    "tsup": "^8"
+  }
+}

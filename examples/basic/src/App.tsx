@@ -2,7 +2,6 @@ import { useRef, useState, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { ThreeDom } from '@react-three-dom/core';
-import { ThreeDomInspector } from '@react-three-dom/inspector';
 import * as THREE from 'three';
 
 // ---------------------------------------------------------------------------
@@ -231,8 +230,6 @@ export function App() {
   return (
     <>
       <StatusHUD />
-      {/* Inspector panel — toggle with Ctrl+Shift+I */}
-      <ThreeDomInspector position="right" defaultOpen={false} />
       <Canvas
         camera={{ position: [5, 5, 5], fov: 50 }}
         shadows

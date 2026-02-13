@@ -22,7 +22,7 @@ function buildNodeTree(store: ObjectStore, meta: ObjectMetadata): SnapshotNode {
     }
   }
 
-  return {
+  const node: SnapshotNode = {
     uuid: meta.uuid,
     name: meta.name,
     type: meta.type,
@@ -33,6 +33,14 @@ function buildNodeTree(store: ObjectStore, meta: ObjectMetadata): SnapshotNode {
     scale: [...meta.scale],
     children,
   };
+
+  if (meta.geometryType) node.geometryType = meta.geometryType;
+  if (meta.materialType) node.materialType = meta.materialType;
+  if (meta.vertexCount != null) node.vertexCount = meta.vertexCount;
+  if (meta.triangleCount != null) node.triangleCount = meta.triangleCount;
+  if (meta.instanceCount != null) node.instanceCount = meta.instanceCount;
+
+  return node;
 }
 
 /**

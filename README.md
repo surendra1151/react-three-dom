@@ -21,7 +21,7 @@ Developer tool & testing bridge for React Three Fiber — DOM mirror for DevTool
 | Package | Description |
 |---------|-------------|
 | `@react-three-dom/core` | DOM mirror, snapshot API, interactions, and bridge component |
-| `@react-three-dom/inspector` | In-app inspector UI overlay |
+| `@react-three-dom/devtools` | Chrome DevTools extension — R3F scene inspector as a DevTools tab |
 | `@react-three-dom/playwright` | Playwright E2E testing SDK with custom fixtures, matchers, and auto-waiting |
 | `@react-three-dom/cypress` | Cypress E2E testing SDK with custom commands and assertions |
 
@@ -33,9 +33,6 @@ Developer tool & testing bridge for React Three Fiber — DOM mirror for DevTool
 # Core (required)
 npm install @react-three-dom/core
 
-# Inspector UI (optional)
-npm install @react-three-dom/inspector
-
 # Testing SDKs (dev dependencies)
 npm install -D @react-three-dom/playwright  # for Playwright
 npm install -D @react-three-dom/cypress     # for Cypress
@@ -43,28 +40,24 @@ npm install -D @react-three-dom/cypress     # for Cypress
 
 ### 2. Add the Bridge to Your App
 
+Include `<ThreeDom />` inside `<Canvas>` so the scene is tracked. For the **R3F tab in Chrome DevTools**, build and load the extension once (see [DevTools extension](#devtools-extension) below).
+
 ```tsx
 import { Canvas } from '@react-three/fiber';
 import { ThreeDom } from '@react-three-dom/core';
-import { ThreeDomInspector } from '@react-three-dom/inspector';
 
 function App() {
   return (
-    <>
-      {/* Optional: Inspector panel (toggle with Ctrl+Shift+I) */}
-      <ThreeDomInspector position="right" defaultOpen={false} />
-      
-      <Canvas>
-        {/* Add ThreeDom anywhere inside Canvas */}
-        <ThreeDom />
-        
-        {/* Your scene */}
-        <mesh userData={{ testId: 'my-cube' }}>
-          <boxGeometry />
-          <meshStandardMaterial color="orange" />
-        </mesh>
-      </Canvas>
-    </>
+    <Canvas>
+      {/* Add ThreeDom anywhere inside Canvas */}
+      <ThreeDom />
+
+      {/* Your scene */}
+      <mesh userData={{ testId: 'my-cube' }}>
+        <boxGeometry />
+        <meshStandardMaterial color="orange" />
+      </mesh>
+    </Canvas>
   );
 }
 ```
@@ -141,6 +134,34 @@ describe('Game scene', () => {
   });
 });
 ```
+
+---
+
+## DevTools extension
+
+When your app uses `@react-three-dom/core` (with `<ThreeDom />` inside `<Canvas>`), you can inspect the scene from a **dedicated R3F tab in Chrome DevTools**, like React DevTools or Redux DevTools.
+
+### Build and load the extension
+
+1. **Build the extension** (from this repo):
+   ```bash
+   cd packages/devtools && pnpm build
+   ```
+   This produces `packages/devtools/dist/` with the unpackable extension.
+
+2. **Load in Chrome**:
+   - Open `chrome://extensions/`
+   - Enable **Developer mode**
+   - Click **Load unpacked**
+   - Select the `packages/devtools/dist` folder
+
+3. **Use it**:
+   - Open your R3F app in a tab
+   - Open DevTools (F12 or Cmd+Option+I)
+   - Click the **R3F** tab in the DevTools toolbar
+   - The panel shows the scene tree, search, selection, and property inspection. Selection in the panel highlights the object in the scene.
+
+The extension talks to the page via `window.__R3F_DOM__`; if the page doesn’t use the library, the panel shows a short message asking you to add `<ThreeDom />` and refresh.
 
 ---
 

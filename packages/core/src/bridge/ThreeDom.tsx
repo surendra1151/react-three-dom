@@ -168,6 +168,10 @@ function exposeGlobalAPI(store: ObjectStore): void {
       if (obj && _selectionManager) _selectionManager.select(obj);
     },
     clearSelection: () => { _selectionManager?.clearSelection(); },
+    getSelection: () =>
+      _selectionManager
+        ? _selectionManager.getSelected().map((o) => o.uuid)
+        : [],
     getObject3D: (idOrUuid: string) => store.getObject3D(idOrUuid),
     version,
   };
@@ -380,6 +384,7 @@ export function ThreeDom({
         drawPath: async () => ({ eventCount: 0, pointCount: 0 }),
         select: () => {},
         clearSelection: () => {},
+        getSelection: () => [],
         getObject3D: () => null,
         version,
       };

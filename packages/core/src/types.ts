@@ -101,6 +101,16 @@ export interface SnapshotNode {
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
+  /** Geometry class name (meshes only) */
+  geometryType?: string;
+  /** Material class name (meshes only) */
+  materialType?: string;
+  /** Total vertex count (meshes only) */
+  vertexCount?: number;
+  /** Triangle count (meshes only) */
+  triangleCount?: number;
+  /** Instance count (InstancedMesh only) */
+  instanceCount?: number;
   children: SnapshotNode[];
 }
 
@@ -194,6 +204,8 @@ export interface R3FDOM {
   select(idOrUuid: string): void;
   /** Clear selection */
   clearSelection(): void;
+  /** Get uuids of currently selected objects (for DevTools panel sync) */
+  getSelection(): string[];
 
   /** Raw Three.js object access (for advanced debugging) */
   getObject3D(idOrUuid: string): Object3D | null;
