@@ -7,6 +7,7 @@
     "build": "pnpm run build:panel && pnpm run copy:manifest",
     "build:panel": "tsup",
     "copy:manifest": "node -e \"require('fs').cpSync('manifest.json', 'dist/manifest.json')\" && node -e \"require('fs').cpSync('devtools.html', 'dist/devtools.html')\" && node -e \"require('fs').cpSync('devtools.js', 'dist/devtools.js')\" && node -e \"require('fs').cpSync('panel.html', 'dist/panel.html')\" && node -e \"require('fs').mkdirSync('dist/icons', {recursive:true})\" && node -e \"require('fs').cpSync('icons/icon16.png', 'dist/icons/icon16.png')\" && node -e \"require('fs').cpSync('icons/icon48.png', 'dist/icons/icon48.png')\"",
+    "pack:store": "pnpm run build && (cd dist && zip -r ../r3f-devtools.zip .)",
     "clean": "rm -rf dist"
   },
   "dependencies": {

@@ -40,7 +40,7 @@ npm install -D @react-three-dom/cypress     # for Cypress
 
 ### 2. Add the Bridge to Your App
 
-Include `<ThreeDom />` inside `<Canvas>` so the scene is tracked. For the **R3F tab in Chrome DevTools**, build and load the extension once (see [DevTools extension](#devtools-extension) below).
+Include `<ThreeDom />` inside `<Canvas>` so the scene is tracked. For the **R3F tab in Chrome DevTools**, install the extension once (see [DevTools extension](#devtools-extension) below).
 
 ```tsx
 import { Canvas } from '@react-three/fiber';
@@ -141,7 +141,15 @@ describe('Game scene', () => {
 
 When your app uses `@react-three-dom/core` (with `<ThreeDom />` inside `<Canvas>`), you can inspect the scene from a **dedicated R3F tab in Chrome DevTools**, like React DevTools or Redux DevTools.
 
-### Build and load the extension
+### Install the extension (recommended)
+
+Install from the Chrome Web Store (one click):
+
+**[Install React Three DOM DevTools](https://chrome.google.com/webstore/detail/react-three-dom-devtools/PLACEHOLDER)** *(replace with your store listing URL after publishing)*
+
+Then open your R3F app, open DevTools (F12 or Cmd+Option+I), and click the **R3F** tab.
+
+### Build and load unpacked (alternative)
 
 1. **Build the extension** (from this repo):
    ```bash
