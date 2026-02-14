@@ -121,8 +121,25 @@ export async function waitForSceneReady(
     await page.waitForTimeout(pollIntervalMs);
   }
 
+  // On timeout, capture current bridge state for diagnostics
+  const state = await page.evaluate(() => {
+    const api = window.__R3F_DOM__;
+    if (!api)
+      return { bridgeFound: false as const, ready: false, error: null, objectCount: 0 };
+    return {
+      bridgeFound: true as const,
+      ready: api._ready,
+      error: api._error ?? null,
+      objectCount: api.getCount(),
+    };
+  });
+
+  const stateLine = state.bridgeFound
+    ? `Bridge found: yes, _ready: ${state.ready}, _error: ${state.error ?? 'none'}, objectCount: ${state.objectCount}`
+    : 'Bridge found: no (ensure <ThreeDom /> is mounted inside <Canvas> and refresh)';
+
   throw new Error(
-    `waitForSceneReady timed out after ${timeout}ms. Last count: ${lastCount}, stable runs: ${stableRuns}/${stableChecks}`,
+    `waitForSceneReady timed out after ${timeout}ms. ${stateLine}. Last count: ${lastCount}, stable runs: ${stableRuns}/${stableChecks}.`,
   );
 }
 
@@ -458,5 +475,68 @@ export async function waitForNewObject(
     `waitForNewObject timed out after ${timeout}ms. ` +
     `No new objects appeared${filterDesc ? ` matching ${filterDesc}` : ''}. ` +
     `Baseline had ${baselineUuids.length} objects.`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// waitForObjectRemoved — wait until an object is no longer in the scene
+// ---------------------------------------------------------------------------
+
+export interface WaitForObjectRemovedOptions {
+  /** Time to wait for the bridge to appear. Default: 30_000 */
+  bridgeTimeout?: number;
+  /** Poll interval in ms. Default: 100 */
+  pollIntervalMs?: number;
+  /** Overall timeout in ms (after bridge is ready). Default: 10_000 */
+  timeout?: number;
+}
+
+/**
+ * Wait until the bridge is ready and an object with the given testId or uuid
+ * is no longer in the scene. Use for delete flows (e.g. user deletes an object,
+ * then you assert it's gone).
+ *
+ * @param page      Playwright Page instance
+ * @param idOrUuid  testId or uuid of the object that should be removed
+ * @param options   Timing options
+ * @throws          If the object is still present after the timeout
+ *
+ * @example
+ * ```ts
+ * await r3f.click('delete-button');
+ * await r3f.waitForObjectRemoved('item-to-delete');
+ * await expect(r3f).not.toExist('item-to-delete');
+ * ```
+ */
+export async function waitForObjectRemoved(
+  page: Page,
+  idOrUuid: string,
+  options: WaitForObjectRemovedOptions = {},
+): Promise<void> {
+  const {
+    bridgeTimeout = 30_000,
+    pollIntervalMs = 100,
+    timeout = 10_000,
+  } = options;
+
+  await waitForReadyBridge(page, bridgeTimeout);
+
+  const deadline = Date.now() + timeout;
+
+  while (Date.now() < deadline) {
+    const stillPresent = await page.evaluate((id) => {
+      const api = window.__R3F_DOM__;
+      if (!api) return true; // bridge gone, treat as still present so we keep waiting
+      const meta = api.getByTestId(id) ?? api.getByUuid(id);
+      return meta !== null;
+    }, idOrUuid);
+
+    if (!stillPresent) return;
+
+    await page.waitForTimeout(pollIntervalMs);
+  }
+
+  throw new Error(
+    `waitForObjectRemoved timed out after ${timeout}ms. Object "${idOrUuid}" is still in the scene.`,
   );
 }

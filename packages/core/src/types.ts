@@ -163,10 +163,18 @@ export interface R3FDOM {
   getByUuid(uuid: string): ObjectMetadata | null;
   /** Tier 1: O(1) lookup by name (returns array, names aren't unique) */
   getByName(name: string): ObjectMetadata[];
+  /** Get direct children of an object by testId or uuid */
+  getChildren(idOrUuid: string): ObjectMetadata[];
+  /** Get parent of an object by testId or uuid (null if root or not found) */
+  getParent(idOrUuid: string): ObjectMetadata | null;
   /** Total number of tracked objects */
   getCount(): number;
   /** Get all objects of a given Three.js type (Mesh, Group, Line, Points, etc.) */
   getByType(type: string): ObjectMetadata[];
+  /** Get all objects with a given geometry type (e.g. "BoxGeometry", "BufferGeometry") */
+  getByGeometryType(type: string): ObjectMetadata[];
+  /** Get all objects with a given material type (e.g. "MeshStandardMaterial") */
+  getByMaterialType(type: string): ObjectMetadata[];
   /** Get objects that have a specific userData key (and optionally matching value) */
   getByUserData(key: string, value?: unknown): ObjectMetadata[];
   /** Count objects of a given Three.js type */

@@ -473,6 +473,25 @@ export class ObjectStore {
     return results;
   }
 
+  /** Get direct children of an object by testId or uuid. Returns empty array if not found. */
+  getChildren(idOrUuid: string): ObjectMetadata[] {
+    const meta = this.getByTestId(idOrUuid) ?? this.getByUuid(idOrUuid);
+    if (!meta) return [];
+    const results: ObjectMetadata[] = [];
+    for (const childUuid of meta.childrenUuids) {
+      const childMeta = this.getByUuid(childUuid);
+      if (childMeta) results.push(childMeta);
+    }
+    return results;
+  }
+
+  /** Get parent of an object by testId or uuid. Returns null if not found or if root. */
+  getParent(idOrUuid: string): ObjectMetadata | null {
+    const meta = this.getByTestId(idOrUuid) ?? this.getByUuid(idOrUuid);
+    if (!meta || meta.parentUuid === null) return null;
+    return this.getByUuid(meta.parentUuid);
+  }
+
   /**
    * Batch lookup: get metadata for multiple objects by testId or uuid.
    * Returns a Map from the requested id to its metadata (or null if not found).
@@ -498,6 +517,32 @@ export class ObjectStore {
     for (const obj of this.getFlatList()) {
       const meta = this._metaByObject.get(obj);
       if (meta && meta.type === type) results.push(meta);
+    }
+    return results;
+  }
+
+  /**
+   * Get all objects with a given geometry type (e.g. "BoxGeometry", "BufferGeometry").
+   * Linear scan — O(n). Only meshes/points/lines have geometryType.
+   */
+  getByGeometryType(type: string): ObjectMetadata[] {
+    const results: ObjectMetadata[] = [];
+    for (const obj of this.getFlatList()) {
+      const meta = this._metaByObject.get(obj);
+      if (meta && meta.geometryType === type) results.push(meta);
+    }
+    return results;
+  }
+
+  /**
+   * Get all objects with a given material type (e.g. "MeshStandardMaterial").
+   * Linear scan — O(n). Only meshes/points/lines have materialType.
+   */
+  getByMaterialType(type: string): ObjectMetadata[] {
+    const results: ObjectMetadata[] = [];
+    for (const obj of this.getFlatList()) {
+      const meta = this._metaByObject.get(obj);
+      if (meta && meta.materialType === type) results.push(meta);
     }
     return results;
   }

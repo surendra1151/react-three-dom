@@ -25,3 +25,4 @@ export type {
   SnapshotNode,
   R3FDOM,
 } from './types';
+export type { SceneDiff, SceneDiffChange } from './diffSnapshots';

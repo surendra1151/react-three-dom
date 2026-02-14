@@ -1,6 +1,8 @@
-import { test, expect } from '@react-three-dom/playwright';
-import type { R3FFixture } from '@react-three-dom/playwright';
+import { expect } from '@playwright/test';
+import { test, r3fMatchers, type R3FFixture } from '@react-three-dom/playwright';
 import type { Page } from '@playwright/test';
+
+expect.extend(r3fMatchers);
 
 // ---------------------------------------------------------------------------
 // Playwright E2E tests for the basic example scene

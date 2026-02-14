@@ -8,8 +8,8 @@ import type { ObjectMetadata, ObjectInspection } from './types';
 // Every matcher auto-retries until the assertion passes or the timeout
 // expires, matching Playwright's built-in assertion behaviour.
 //
-// All 26 matchers:
-//  Tier 1 (metadata): toExist, toBeVisible, toHavePosition, toHaveRotation,
+// All 27 matchers:
+//  Tier 1 (metadata): toExist, toBeVisible, toHavePosition, toHaveWorldPosition, toHaveRotation,
 //    toHaveScale, toHaveType, toHaveName, toHaveGeometryType,
 //    toHaveMaterialType, toHaveChildCount, toHaveParent,
 //    toHaveInstanceCount
@@ -81,10 +81,27 @@ async function fetchInsp(page: Page, id: string): Promise<ObjectInspection | nul
   }, id);
 }
 
+/** World position from column-major 4x4 matrix (translation at indices 12, 13, 14). */
+async function fetchWorldPosition(page: Page, id: string): Promise<[number, number, number] | null> {
+  return page.evaluate((i) => {
+    const api = window.__R3F_DOM__;
+    if (!api) return null;
+    const insp = api.inspect(i);
+    if (!insp || !insp.worldMatrix || insp.worldMatrix.length < 15) return null;
+    const m = insp.worldMatrix;
+    return [m[12], m[13], m[14]];
+  }, id);
+}
+
 interface R3FMatcherReceiver {
   page: Page;
   getObject(idOrUuid: string): Promise<ObjectMetadata | null>;
   inspect(idOrUuid: string): Promise<ObjectInspection | null>;
+}
+
+/** Context provided by Playwright when the matcher is invoked via expect().extend() */
+interface ExpectMatcherContext {
+  isNot?: boolean;
 }
 
 interface MatcherOptions {
@@ -112,15 +129,16 @@ function notFound(name: string, id: string, detail: string, timeout: number) {
 }
 
 // ===========================================================================
-// Matchers
+// Matchers — export as object so users extend Playwright's expect (see README).
+// This avoids replacing expect and breaking native assertions (e.g. timeout on toBeVisible).
 // ===========================================================================
 
-export const expect = baseExpect.extend({
+const r3fMatchers = {
 
   // ========================= TIER 1 — Metadata ============================
 
   // --- toExist ---
-  async toExist(r3f: R3FMatcherReceiver, id: string, opts?: MatcherOptions) {
+  async toExist(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -142,7 +160,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toBeVisible ---
-  async toBeVisible(r3f: R3FMatcherReceiver, id: string, opts?: MatcherOptions) {
+  async toBeVisible(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -165,7 +183,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHavePosition ---
-  async toHavePosition(r3f: R3FMatcherReceiver, id: string, expected: [number, number, number], tolOpts?: number | Vec3Opts) {
+  async toHavePosition(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expected: [number, number, number], tolOpts?: number | Vec3Opts) {
     const { timeout, interval, tolerance } = parseTol(tolOpts, 0.01);
     const isNot = this.isNot;
     let meta: ObjectMetadata | null = null;
@@ -191,8 +209,36 @@ export const expect = baseExpect.extend({
     };
   },
 
+  // --- toHaveWorldPosition ---
+  async toHaveWorldPosition(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expected: [number, number, number], tolOpts?: number | Vec3Opts) {
+    const { timeout, interval, tolerance } = parseTol(tolOpts, 0.01);
+    const isNot = this.isNot;
+    let worldPos: [number, number, number] | null = null;
+    let pass = false;
+    let delta: [number, number, number] = [0, 0, 0];
+    try {
+      await baseExpect.poll(async () => {
+        worldPos = await fetchWorldPosition(r3f.page, id);
+        if (!worldPos) return false;
+        delta = [Math.abs(worldPos[0] - expected[0]), Math.abs(worldPos[1] - expected[1]), Math.abs(worldPos[2] - expected[2])];
+        pass = delta.every((d) => d <= tolerance);
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    if (!worldPos) return notFound('toHaveWorldPosition', id, `to have world position [${expected}]`, timeout);
+    const actualWorldPos: [number, number, number] = worldPos;
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected "${id}" to NOT have world position [${expected}] (±${tolerance})`
+          : `Expected "${id}" world position [${expected}] (±${tolerance}), got [${actualWorldPos[0].toFixed(4)}, ${actualWorldPos[1].toFixed(4)}, ${actualWorldPos[2].toFixed(4)}] (Δ [${delta.map((d) => d.toFixed(4))}]) (waited ${timeout}ms)`,
+      name: 'toHaveWorldPosition', expected, actual: actualWorldPos,
+    };
+  },
+
   // --- toHaveRotation ---
-  async toHaveRotation(r3f: R3FMatcherReceiver, id: string, expected: [number, number, number], tolOpts?: number | Vec3Opts) {
+  async toHaveRotation(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expected: [number, number, number], tolOpts?: number | Vec3Opts) {
     const { timeout, interval, tolerance } = parseTol(tolOpts, 0.01);
     const isNot = this.isNot;
     let meta: ObjectMetadata | null = null;
@@ -219,7 +265,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveScale ---
-  async toHaveScale(r3f: R3FMatcherReceiver, id: string, expected: [number, number, number], tolOpts?: number | Vec3Opts) {
+  async toHaveScale(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expected: [number, number, number], tolOpts?: number | Vec3Opts) {
     const { timeout, interval, tolerance } = parseTol(tolOpts, 0.01);
     const isNot = this.isNot;
     let meta: ObjectMetadata | null = null;
@@ -246,7 +292,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveType ---
-  async toHaveType(r3f: R3FMatcherReceiver, id: string, expectedType: string, opts?: MatcherOptions) {
+  async toHaveType(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expectedType: string, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -272,7 +318,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveName ---
-  async toHaveName(r3f: R3FMatcherReceiver, id: string, expectedName: string, opts?: MatcherOptions) {
+  async toHaveName(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expectedName: string, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -298,7 +344,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveGeometryType ---
-  async toHaveGeometryType(r3f: R3FMatcherReceiver, id: string, expectedGeo: string, opts?: MatcherOptions) {
+  async toHaveGeometryType(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expectedGeo: string, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -324,7 +370,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveMaterialType ---
-  async toHaveMaterialType(r3f: R3FMatcherReceiver, id: string, expectedMat: string, opts?: MatcherOptions) {
+  async toHaveMaterialType(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expectedMat: string, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -350,7 +396,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveChildCount ---
-  async toHaveChildCount(r3f: R3FMatcherReceiver, id: string, expectedCount: number, opts?: MatcherOptions) {
+  async toHaveChildCount(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expectedCount: number, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -376,7 +422,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveParent ---
-  async toHaveParent(r3f: R3FMatcherReceiver, id: string, expectedParent: string, opts?: MatcherOptions) {
+  async toHaveParent(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expectedParent: string, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -407,7 +453,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveInstanceCount ---
-  async toHaveInstanceCount(r3f: R3FMatcherReceiver, id: string, expectedCount: number, opts?: MatcherOptions) {
+  async toHaveInstanceCount(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expectedCount: number, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -434,7 +480,7 @@ export const expect = baseExpect.extend({
   // ========================= TIER 2 — Inspection ==========================
 
   // --- toBeInFrustum ---
-  async toBeInFrustum(r3f: R3FMatcherReceiver, id: string, opts?: MatcherOptions) {
+  async toBeInFrustum(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -462,7 +508,7 @@ export const expect = baseExpect.extend({
 
   // --- toHaveBounds ---
   async toHaveBounds(
-    r3f: R3FMatcherReceiver, id: string,
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string,
     expected: { min: [number, number, number]; max: [number, number, number] },
     tolOpts?: number | Vec3Opts,
   ) {
@@ -491,7 +537,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveColor ---
-  async toHaveColor(r3f: R3FMatcherReceiver, id: string, expectedColor: string, opts?: MatcherOptions) {
+  async toHaveColor(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expectedColor: string, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -519,7 +565,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveOpacity ---
-  async toHaveOpacity(r3f: R3FMatcherReceiver, id: string, expectedOpacity: number, tolOpts?: number | Vec3Opts) {
+  async toHaveOpacity(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expectedOpacity: number, tolOpts?: number | Vec3Opts) {
     const { timeout, interval, tolerance } = parseTol(tolOpts, 0.01);
     const isNot = this.isNot;
     let insp: ObjectInspection | null = null;
@@ -545,7 +591,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toBeTransparent ---
-  async toBeTransparent(r3f: R3FMatcherReceiver, id: string, opts?: MatcherOptions) {
+  async toBeTransparent(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -571,7 +617,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveVertexCount ---
-  async toHaveVertexCount(r3f: R3FMatcherReceiver, id: string, expectedCount: number, opts?: MatcherOptions) {
+  async toHaveVertexCount(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expectedCount: number, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -596,7 +642,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveTriangleCount ---
-  async toHaveTriangleCount(r3f: R3FMatcherReceiver, id: string, expectedCount: number, opts?: MatcherOptions) {
+  async toHaveTriangleCount(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expectedCount: number, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -621,7 +667,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveUserData ---
-  async toHaveUserData(r3f: R3FMatcherReceiver, id: string, key: string, expectedValue?: unknown, opts?: MatcherOptions) {
+  async toHaveUserData(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, key: string, expectedValue?: unknown, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -657,7 +703,7 @@ export const expect = baseExpect.extend({
   },
 
   // --- toHaveMapTexture ---
-  async toHaveMapTexture(r3f: R3FMatcherReceiver, id: string, expectedName?: string, opts?: MatcherOptions) {
+  async toHaveMapTexture(this: ExpectMatcherContext, r3f: R3FMatcherReceiver, id: string, expectedName?: string, opts?: MatcherOptions) {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_INTERVAL;
     const isNot = this.isNot;
@@ -703,7 +749,7 @@ export const expect = baseExpect.extend({
    * @example expect(r3f).toHaveObjectCount(42, { timeout: 10_000 });
    */
   async toHaveObjectCount(
-    r3f: R3FMatcherReceiver,
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
     expected: number,
     options?: MatcherOptions,
   ) {
@@ -736,7 +782,7 @@ export const expect = baseExpect.extend({
    * @example expect(r3f).toHaveObjectCountGreaterThan(10);
    */
   async toHaveObjectCountGreaterThan(
-    r3f: R3FMatcherReceiver,
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
     min: number,
     options?: MatcherOptions,
   ) {
@@ -770,7 +816,7 @@ export const expect = baseExpect.extend({
    * @example expect(r3f).toHaveCountByType('Line', 10, { timeout: 10_000 });
    */
   async toHaveCountByType(
-    r3f: R3FMatcherReceiver,
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
     type: string,
     expected: number,
     options?: MatcherOptions,
@@ -805,7 +851,7 @@ export const expect = baseExpect.extend({
    * @example expect(r3f).not.toHaveTotalTriangleCountGreaterThan(100000); // budget guard
    */
   async toHaveTotalTriangleCount(
-    r3f: R3FMatcherReceiver,
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
     expected: number,
     options?: MatcherOptions,
   ) {
@@ -838,7 +884,7 @@ export const expect = baseExpect.extend({
    * @example expect(r3f).toHaveTotalTriangleCountLessThan(100_000);
    */
   async toHaveTotalTriangleCountLessThan(
-    r3f: R3FMatcherReceiver,
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
     max: number,
     options?: MatcherOptions,
   ) {
@@ -863,4 +909,6 @@ export const expect = baseExpect.extend({
       name: 'toHaveTotalTriangleCountLessThan', expected: `< ${max}`, actual,
     };
   },
-});
+};
+
+export { r3fMatchers };

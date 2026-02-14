@@ -1,5 +1,6 @@
 /// <reference types="cypress" />
-import type { R3FDOM, SnapshotNode } from './types';
+import type { R3FDOM, SnapshotNode, SceneSnapshot } from './types';
+import { diffSnapshots } from './diffSnapshots';
 
 // ---------------------------------------------------------------------------
 // Helper to get the R3F DOM bridge from the current window
@@ -155,6 +156,62 @@ export function registerCommands(): void {
     });
   });
 
+  Cypress.Commands.add('r3fGetByName', (name: string) => {
+    return cy.window({ log: false }).then((win) => {
+      return getR3F(win).getByName(name);
+    });
+  });
+
+  Cypress.Commands.add('r3fGetByUuid', (uuid: string) => {
+    return cy.window({ log: false }).then((win) => {
+      return getR3F(win).getByUuid(uuid);
+    });
+  });
+
+  Cypress.Commands.add('r3fGetChildren', (idOrUuid: string) => {
+    return cy.window({ log: false }).then((win) => {
+      return getR3F(win).getChildren(idOrUuid);
+    });
+  });
+
+  Cypress.Commands.add('r3fGetParent', (idOrUuid: string) => {
+    return cy.window({ log: false }).then((win) => {
+      return getR3F(win).getParent(idOrUuid);
+    });
+  });
+
+  /** Get the R3F canvas element (has data-r3f-canvas="true"). Use for canvas-level actions. */
+  Cypress.Commands.add('r3fGetCanvas', () => {
+    return cy.get('[data-r3f-canvas]');
+  });
+
+  Cypress.Commands.add('r3fGetWorldPosition', (idOrUuid: string) => {
+    return cy.window({ log: false }).then((win) => {
+      const api = getR3F(win);
+      const insp = api.inspect(idOrUuid);
+      if (!insp?.worldMatrix || insp.worldMatrix.length < 15) return null;
+      const m = insp.worldMatrix;
+      return [m[12], m[13], m[14]] as [number, number, number];
+    });
+  });
+
+  Cypress.Commands.add('r3fDiffSnapshots', (before: SceneSnapshot, after: SceneSnapshot) => {
+    return cy.wrap(diffSnapshots(before, after), { log: false });
+  });
+
+  Cypress.Commands.add('r3fTrackObjectCount', (action: () => Cypress.Chainable<unknown>) => {
+    return cy.window({ log: false }).then((win) => {
+      const before = getR3F(win).snapshot();
+      return action().then(() =>
+        cy.window({ log: false }).then((w) => {
+          const after = getR3F(w).snapshot();
+          const d = diffSnapshots(before, after);
+          return { added: d.added.length, removed: d.removed.length };
+        }),
+      );
+    });
+  });
+
   Cypress.Commands.add('r3fInspect', (idOrUuid: string) => {
     return cy.window({ log: false }).then((win) => {
       return getR3F(win).inspect(idOrUuid);
@@ -211,6 +268,18 @@ export function registerCommands(): void {
   Cypress.Commands.add('r3fGetObjects', (ids: string[]) => {
     return cy.window({ log: false }).then((win) => {
       return getR3F(win).getObjects(ids);
+    });
+  });
+
+  Cypress.Commands.add('r3fGetByGeometryType', (type: string) => {
+    return cy.window({ log: false }).then((win) => {
+      return getR3F(win).getByGeometryType(type);
+    });
+  });
+
+  Cypress.Commands.add('r3fGetByMaterialType', (type: string) => {
+    return cy.window({ log: false }).then((win) => {
+      return getR3F(win).getByMaterialType(type);
     });
   });
 }

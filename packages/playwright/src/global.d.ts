@@ -10,8 +10,12 @@ interface R3FDOM {
   getByTestId(id: string): ObjectMetadata | null;
   getByUuid(uuid: string): ObjectMetadata | null;
   getByName(name: string): ObjectMetadata[];
+  getChildren(idOrUuid: string): ObjectMetadata[];
+  getParent(idOrUuid: string): ObjectMetadata | null;
   getCount(): number;
   getByType(type: string): ObjectMetadata[];
+  getByGeometryType(type: string): ObjectMetadata[];
+  getByMaterialType(type: string): ObjectMetadata[];
   getByUserData(key: string, value?: unknown): ObjectMetadata[];
   getCountByType(type: string): number;
   getObjects(ids: string[]): Record<string, ObjectMetadata | null>;

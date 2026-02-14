@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ObjectMetadata, ObjectInspection, SceneSnapshot } from './types';
+import type { SceneDiff } from './diffSnapshots';
 
 declare global {
   namespace Cypress {
@@ -47,6 +48,22 @@ declare global {
       // ---- Queries ----
       /** Get object metadata by testId or uuid. */
       r3fGetObject(idOrUuid: string): Chainable<ObjectMetadata | null>;
+      /** Get all objects with the given name (object.name). */
+      r3fGetByName(name: string): Chainable<ObjectMetadata[]>;
+      /** Get object metadata by uuid only. */
+      r3fGetByUuid(uuid: string): Chainable<ObjectMetadata | null>;
+      /** Get direct children of an object by testId or uuid. */
+      r3fGetChildren(idOrUuid: string): Chainable<ObjectMetadata[]>;
+      /** Get parent of an object by testId or uuid. */
+      r3fGetParent(idOrUuid: string): Chainable<ObjectMetadata | null>;
+      /** Get the R3F canvas element (data-r3f-canvas). */
+      r3fGetCanvas(): Chainable<JQuery<HTMLCanvasElement>>;
+      /** Get world-space position [x, y, z] of an object. */
+      r3fGetWorldPosition(idOrUuid: string): Chainable<[number, number, number] | null>;
+      /** Compare two scene snapshots (added, removed, changed). */
+      r3fDiffSnapshots(before: SceneSnapshot, after: SceneSnapshot): Chainable<SceneDiff>;
+      /** Run an action and return { added, removed } object count change. */
+      r3fTrackObjectCount(action: () => Cypress.Chainable<unknown>): Chainable<{ added: number; removed: number }>;
       /** Get heavy inspection data (Tier 2) by testId or uuid. */
       r3fInspect(idOrUuid: string): Chainable<ObjectInspection | null>;
       /** Take a full scene snapshot. */
@@ -57,6 +74,10 @@ declare global {
       // ---- BIM/CAD queries ----
       /** Get all objects of a given Three.js type (e.g. "Mesh", "Group", "Line"). */
       r3fGetByType(type: string): Chainable<ObjectMetadata[]>;
+      /** Get all objects with a given geometry type (e.g. "BoxGeometry"). */
+      r3fGetByGeometryType(type: string): Chainable<ObjectMetadata[]>;
+      /** Get all objects with a given material type (e.g. "MeshStandardMaterial"). */
+      r3fGetByMaterialType(type: string): Chainable<ObjectMetadata[]>;
       /** Get objects that have a specific userData key (and optionally matching value). */
       r3fGetByUserData(key: string, value?: unknown): Chainable<ObjectMetadata[]>;
       /** Count objects of a given Three.js type. */
@@ -93,6 +114,11 @@ declare global {
         pollIntervalMs?: number;
         timeout?: number;
       }): Chainable<{ newObjects: ObjectMetadata[]; newUuids: string[]; count: number }>;
+      /** Wait until an object (by testId or uuid) is no longer in the scene. */
+      r3fWaitForObjectRemoved(
+        idOrUuid: string,
+        options?: { bridgeTimeout?: number; pollIntervalMs?: number; timeout?: number },
+      ): Chainable<void>;
     }
 
     interface Assertion {

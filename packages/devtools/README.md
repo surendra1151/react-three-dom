@@ -6,7 +6,7 @@ Chrome DevTools extension that adds an **R3F** tab to the DevTools toolbar. When
 
 Install the extension from the Chrome Web Store (one click):
 
-**[Install React Three DOM DevTools](https://chrome.google.com/webstore/detail/react-three-dom-devtools/PLACEHOLDER)** *(replace with your store listing URL after publishing)*
+**[Install React Three DOM DevTools](https://chrome.google.com/webstore/detail/knmbpbojmdgjgjijbepkmgpdklndlfkn)**
 
 After installing, open your R3F app, open DevTools (F12), and click the **R3F** tab.
 

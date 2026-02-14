@@ -9,9 +9,9 @@ Developer tool & testing bridge for React Three Fiber — DOM mirror for DevTool
 - **Deterministic Interactions** — Click, hover, drag, wheel, double-click, right-click, and freeform drawing on 3D objects via synthetic pointer events
 - **Scene Snapshots** — JSON representation of your entire scene for assertions and debugging
 - **Inspector UI** — Built-in overlay panel with tree view, search, and property inspection
-- **26 Auto-Retrying Matchers** — Comprehensive Playwright matchers covering position, rotation, scale, color, geometry, materials, hierarchy, performance budgets, and more
+- **27 Auto-Retrying Matchers** — Comprehensive Playwright matchers covering position, rotation, scale, world position, color, geometry, materials, hierarchy, performance budgets, and more
 - **Auto-Waiting** — Interactions and waiters automatically wait for the bridge and objects, with rich diagnostics on failure
-- **BIM/CAD Support** — Purpose-built queries (`getByType`, `getByUserData`, `getCountByType`) for architecture and engineering apps
+- **BIM/CAD Support** — Purpose-built queries (`getByType`, `getByGeometryType`, `getByMaterialType`, `getByUserData`, `getCountByType`) for architecture and engineering apps
 - **Drawing App Support** — `drawPath()` interaction and `waitForNewObject()` waiter for canvas drawing/annotation tools
 - **Debug Logging** — Three-layer logging system that surfaces browser-side logs in your test terminal
 - **Error Resilience** — `try/catch` throughout the bridge, per-frame sync, and metadata extraction to prevent single-object crashes
@@ -40,7 +40,7 @@ npm install -D @react-three-dom/cypress     # for Cypress
 
 ### 2. Add the Bridge to Your App
 
-Include `<ThreeDom />` inside `<Canvas>` so the scene is tracked. For the **R3F tab in Chrome DevTools**, install the extension once (see [DevTools extension](#devtools-extension) below).
+Include `<ThreeDom />` inside `<Canvas>` so the scene is tracked. You can pass `enabled={false}` to disable the bridge (e.g. in production). For the **R3F tab in Chrome DevTools**, install the extension once (see [DevTools extension](#devtools-extension) below).
 
 ```tsx
 import { Canvas } from '@react-three/fiber';
@@ -64,7 +64,7 @@ function App() {
 
 ### 3. Add Test IDs to Your Objects
 
-Use `userData.testId` for stable selectors in tests:
+Use `userData.testId` on your 3D objects for stable selectors in tests. You don't add a separate DOM element or `data-testid` attribute — the testId lives on the Three.js object's `userData` and the bridge uses it for lookups (e.g. `r3f.getObject('my-id')` or `r3f.click('my-id')`).
 
 ```tsx
 <mesh userData={{ testId: 'player-character' }}>
@@ -90,7 +90,9 @@ Use `userData.testId` for stable selectors in tests:
 #### Playwright
 
 ```ts
-import { test, expect } from '@react-three-dom/playwright';
+import { expect } from '@playwright/test';
+import { test, r3fMatchers } from '@react-three-dom/playwright';
+expect.extend(r3fMatchers);
 
 test('player can click on enemy', async ({ page, r3f }) => {
   await page.goto('/');
@@ -145,7 +147,7 @@ When your app uses `@react-three-dom/core` (with `<ThreeDom />` inside `<Canvas>
 
 Install from the Chrome Web Store (one click):
 
-**[Install React Three DOM DevTools](https://chrome.google.com/webstore/detail/react-three-dom-devtools/PLACEHOLDER)** *(replace with your store listing URL after publishing)*
+**[Install React Three DOM DevTools](https://chrome.google.com/webstore/detail/knmbpbojmdgjgjijbepkmgpdklndlfkn)**
 
 Then open your R3F app, open DevTools (F12 or Cmd+Option+I), and click the **R3F** tab.
 
@@ -177,6 +179,16 @@ The extension talks to the page via `window.__R3F_DOM__`; if the page doesn’t 
 
 ### Setup
 
+Use Playwright's `expect` and extend it with R3F matchers so native assertions (e.g. `expect(locator).toBeVisible({ timeout })`) keep working. In a **setup file** that runs before your tests (or at the top of each test file), run:
+
+```ts
+import { expect } from '@playwright/test';
+import { r3fMatchers } from '@react-three-dom/playwright';
+expect.extend(r3fMatchers);
+```
+
+Then in **playwright.config.ts**:
+
 ```ts
 // playwright.config.ts
 import { defineConfig } from '@playwright/test';
@@ -184,7 +196,7 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   use: {
     baseURL: 'http://localhost:5173',
-    // Headless Chromium needs WebGL
+    // Headless Chromium needs WebGL (see "Running in CI" below)
     launchOptions: {
       args: ['--enable-webgl', '--enable-gpu'],
     },
@@ -192,10 +204,43 @@ export default defineConfig({
 });
 ```
 
+### Running in CI (headless WebGL)
+
+Headless Chromium often has no GPU/WebGL by default. Without the right flags, R3F scenes may not render and you’ll see timeouts or a bridge error like "WebGL context not available". Use these launch args so WebGL works in CI:
+
+**One-line copy-paste** (works on GitHub Actions Linux, most macOS runners, and Docker):
+
+```ts
+args: ['--enable-webgl', '--use-gl=angle', '--use-angle=swiftshader-webgl', '--enable-gpu'],
+```
+
+In `playwright.config.ts`:
+
+```ts
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  use: {
+    baseURL: 'http://localhost:5173',
+    launchOptions: {
+      args: ['--enable-webgl', '--use-gl=angle', '--use-angle=swiftshader-webgl', '--enable-gpu'],
+    },
+  },
+});
+```
+
+- **GitHub Actions (Linux):** The args above are usually enough. If you hit "Missing X server", ensure the job runs with a display or use `xvfb-run` if your image doesn’t provide one.
+- **macOS runners:** Same args; SwiftShader provides a software WebGL implementation when no GPU is available.
+- **Docker:** Use a base image that includes Chromium dependencies (e.g. Playwright’s `mcr.microsoft.com/playwright:v1.x.x-jammy`) and the same `args`. No extra display is needed with SwiftShader.
+
+If WebGL still isn’t available, the bridge will set `_error` and `waitForSceneReady` (or the next waiter) will fail with a message pointing you at these flags.
+
 ### Test Fixture
 
 ```ts
-import { test, expect } from '@react-three-dom/playwright';
+import { expect } from '@playwright/test';
+import { test, r3fMatchers } from '@react-three-dom/playwright';
+expect.extend(r3fMatchers);
 
 test('example', async ({ page, r3f }) => {
   await page.goto('/');
@@ -207,23 +252,52 @@ test('example', async ({ page, r3f }) => {
 ### Queries
 
 ```ts
-// Single object lookups
-await r3f.getByTestId('my-object');     // ObjectMetadata | null
+// Single object lookups (testId = userData.testId on the 3D object, no extra DOM needed)
+await r3f.getObject('my-object');       // by testId or uuid; ObjectMetadata | null
+await r3f.getByTestId('my-object');     // by userData.testId only; ObjectMetadata | null
 await r3f.getByUuid('abc-123');         // ObjectMetadata | null
-await r3f.getCount();                    // number
+await r3f.getByName('Camera');          // ObjectMetadata[] (names not unique)
+await r3f.getCount();                   // number
 
-// BIM/CAD queries
-await r3f.getByType('Mesh');            // ObjectMetadata[]
-await r3f.getByUserData('category', 'wall');  // ObjectMetadata[]
+// Hierarchy (scene graph traversal)
+await r3f.getChildren('group-id');      // ObjectMetadata[] (direct children)
+await r3f.getParent('mesh-id');         // ObjectMetadata | null
+
+// Query by "prop" — use userData (custom keys) or object name
+await r3f.getByName('Camera');          // object.name (e.g. from the name prop in R3F)
+await r3f.getByUserData('category');    // any object with userData.category
+await r3f.getByUserData('category', 'wall');  // userData.category === 'wall'
+await r3f.getByType('Mesh');            // ObjectMetadata[] (Three.js type)
+await r3f.getByGeometryType('BoxGeometry');   // ObjectMetadata[] (geometry class)
+await r3f.getByMaterialType('MeshStandardMaterial'); // ObjectMetadata[] (material class)
 await r3f.getCountByType('Mesh');       // number
 
 // Batch query (single round-trip for multiple objects)
 const results = await r3f.getObjects(['wall-1', 'door-2', 'window-3']);
 // results: Record<string, ObjectMetadata | null>
 
-// Full scene
+// Full scene / inspection
 await r3f.snapshot();                    // SceneSnapshot
 await r3f.inspect('my-object');          // ObjectInspection | null
+await r3f.getWorldPosition('my-object'); // [x, y, z] world position or null
+
+// Scene diff (compare before/after snapshots: added, removed, changed nodes)
+const before = await r3f.snapshot();
+// ... perform action ...
+const after = await r3f.snapshot();
+const diff = r3f.diffSnapshots(before!, after!);
+// diff.added, diff.removed, diff.changed (field-level: name, position, etc.)
+
+// Object count change (run action, get added/removed counts)
+const { added, removed } = await r3f.trackObjectCount(async () => {
+  await r3f.click('add-widget');
+});
+expect(added).toBe(1);
+expect(removed).toBe(0);
+
+// Canvas locator (the R3F canvas the bridge is attached to)
+const canvas = r3f.getCanvasLocator();
+await canvas.click({ position: { x: 500, y: 400 } });
 ```
 
 ### Interactions
@@ -300,11 +374,15 @@ const { newObjects, count } = await r3f.waitForNewObject({
   nameContains: 'stroke', // optional: filter by name substring
   timeout: 10_000,
 });
+
+// Wait for an object to be removed (for delete flows)
+await r3f.click('delete-button');
+await r3f.waitForObjectRemoved('item-to-delete');
 ```
 
 All waiters check `_ready === true` on the bridge and **fail fast** with rich diagnostics if the bridge is in an error state, instead of silently timing out.
 
-### Matchers (26 total)
+### Matchers (27 total)
 
 All matchers auto-retry using `expect.poll()` until they pass or timeout (default 5s).
 
@@ -314,6 +392,7 @@ All matchers auto-retry using `expect.poll()` until they pass or timeout (defaul
 await expect(r3f).toExist('my-object');
 await expect(r3f).toBeVisible('my-object');
 await expect(r3f).toHavePosition('id', [x, y, z], tolerance?);
+await expect(r3f).toHaveWorldPosition('id', [x, y, z], tolerance?);  // world-space (nested objects)
 await expect(r3f).toHaveRotation('id', [x, y, z], tolerance?);
 await expect(r3f).toHaveScale('id', [x, y, z], tolerance?);
 await expect(r3f).toHaveType('id', 'Mesh');
@@ -387,14 +466,24 @@ import '@react-three-dom/cypress';
 #### Queries
 
 ```ts
-cy.r3fGetObject('id');                       // ObjectMetadata | null
+cy.r3fGetObject('id');                       // ObjectMetadata | null (by testId or uuid)
+cy.r3fGetByName('Camera');                   // ObjectMetadata[]
+cy.r3fGetByUuid('abc-123');                  // ObjectMetadata | null
+cy.r3fGetChildren('group-id');               // ObjectMetadata[] (direct children)
+cy.r3fGetParent('mesh-id');                 // ObjectMetadata | null
+cy.r3fGetCanvas();                           // Chainable<canvas> (data-r3f-canvas)
+cy.r3fGetWorldPosition('id');                // [x, y, z] | null
 cy.r3fInspect('id');                         // ObjectInspection | null
-cy.r3fSnapshot();                            // SceneSnapshot
+cy.r3fSnapshot();                           // SceneSnapshot
 cy.r3fGetCount();                            // number
 cy.r3fGetByType('Mesh');                     // ObjectMetadata[]
+cy.r3fGetByGeometryType('BoxGeometry');      // ObjectMetadata[]
+cy.r3fGetByMaterialType('MeshStandardMaterial'); // ObjectMetadata[]
 cy.r3fGetByUserData('category', 'wall');     // ObjectMetadata[]
 cy.r3fGetCountByType('Mesh');                // number
 cy.r3fGetObjects(['id1', 'id2', 'id3']);     // Record<string, ObjectMetadata | null>
+cy.r3fDiffSnapshots(before, after);           // SceneDiff (added, removed, changed)
+cy.r3fTrackObjectCount(() => cy.r3fClick('add-btn')); // { added, removed }
 ```
 
 #### Interactions
@@ -417,6 +506,7 @@ cy.r3fWaitForSceneReady({ stableChecks: 3, timeout: 10_000 });
 cy.r3fWaitForObject('id', { bridgeTimeout: 30_000, objectTimeout: 40_000 });
 cy.r3fWaitForIdle({ idleChecks: 10, timeout: 10_000 });
 cy.r3fWaitForNewObject({ type: 'Line', timeout: 10_000 });
+cy.r3fWaitForObjectRemoved('id', { timeout: 10_000 });  // for delete flows
 ```
 
 #### Diagnostics
@@ -448,8 +538,12 @@ interface R3FDOM {
   getByTestId(id: string): ObjectMetadata | null;
   getByUuid(uuid: string): ObjectMetadata | null;
   getByName(name: string): ObjectMetadata[];
+  getChildren(idOrUuid: string): ObjectMetadata[];
+  getParent(idOrUuid: string): ObjectMetadata | null;
   getCount(): number;
   getByType(type: string): ObjectMetadata[];
+  getByGeometryType(type: string): ObjectMetadata[];
+  getByMaterialType(type: string): ObjectMetadata[];
   getByUserData(key: string, value?: unknown): ObjectMetadata[];
   getCountByType(type: string): number;
   getObjects(ids: string[]): Record<string, ObjectMetadata | null>;
@@ -588,7 +682,9 @@ test('GLB model loads and displays', async ({ page, r3f }) => {
 ### Drawing / Whiteboard App
 
 ```ts
-import { test, expect, linePath, circlePath } from '@react-three-dom/playwright';
+import { expect } from '@playwright/test';
+import { test, r3fMatchers, linePath, circlePath } from '@react-three-dom/playwright';
+expect.extend(r3fMatchers);
 
 test('user can draw shapes', async ({ page, r3f }) => {
   await page.goto('/whiteboard');

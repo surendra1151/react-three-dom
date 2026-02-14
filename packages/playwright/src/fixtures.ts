@@ -1,12 +1,15 @@
 import { test as base } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import type { ObjectMetadata, ObjectInspection, SceneSnapshot, SnapshotNode } from './types';
-import { waitForSceneReady, waitForIdle, waitForObject, waitForNewObject } from './waiters';
+import { diffSnapshots as diffSnapshotsHelper } from './diffSnapshots';
+import type { SceneDiff } from './diffSnapshots';
+import { waitForSceneReady, waitForIdle, waitForObject, waitForNewObject, waitForObjectRemoved } from './waiters';
 import type { WaitForNewObjectOptions, WaitForNewObjectResult } from './waiters';
 import type {
   WaitForSceneReadyOptions,
   WaitForIdleOptions,
   WaitForObjectOptions,
+  WaitForObjectRemovedOptions,
 } from './waiters';
 import * as interactions from './interactions';
 
@@ -79,12 +82,67 @@ export class R3FFixture {
     }, idOrUuid);
   }
 
+  /** Get object metadata by testId (userData.testId). Returns null if not found. */
+  async getByTestId(testId: string): Promise<ObjectMetadata | null> {
+    return this._page.evaluate((id) => {
+      const api = window.__R3F_DOM__;
+      return api ? api.getByTestId(id) : null;
+    }, testId);
+  }
+
+  /** Get object metadata by UUID. Returns null if not found. */
+  async getByUuid(uuid: string): Promise<ObjectMetadata | null> {
+    return this._page.evaluate((u) => {
+      const api = window.__R3F_DOM__;
+      return api ? api.getByUuid(u) : null;
+    }, uuid);
+  }
+
+  /** Get all objects with the given name (names are not unique in Three.js). */
+  async getByName(name: string): Promise<ObjectMetadata[]> {
+    return this._page.evaluate((n) => {
+      const api = window.__R3F_DOM__;
+      return api ? api.getByName(n) : [];
+    }, name);
+  }
+
+  /** Get direct children of an object by testId or uuid. */
+  async getChildren(idOrUuid: string): Promise<ObjectMetadata[]> {
+    return this._page.evaluate((id) => {
+      const api = window.__R3F_DOM__;
+      return api ? api.getChildren(id) : [];
+    }, idOrUuid);
+  }
+
+  /** Get parent of an object by testId or uuid. Returns null if root or not found. */
+  async getParent(idOrUuid: string): Promise<ObjectMetadata | null> {
+    return this._page.evaluate((id) => {
+      const api = window.__R3F_DOM__;
+      return api ? api.getParent(id) : null;
+    }, idOrUuid);
+  }
+
   /** Get heavy inspection data (Tier 2) by testId or uuid. */
   async inspect(idOrUuid: string): Promise<ObjectInspection | null> {
     return this._page.evaluate((id) => {
       const api = window.__R3F_DOM__;
       if (!api) return null;
       return api.inspect(id);
+    }, idOrUuid);
+  }
+
+  /**
+   * Get world-space position [x, y, z] of an object (from its world matrix).
+   * Use for nested objects where local position differs from world position.
+   */
+  async getWorldPosition(idOrUuid: string): Promise<[number, number, number] | null> {
+    return this._page.evaluate((id) => {
+      const api = window.__R3F_DOM__;
+      if (!api) return null;
+      const insp = api.inspect(id);
+      if (!insp?.worldMatrix || insp.worldMatrix.length < 15) return null;
+      const m = insp.worldMatrix;
+      return [m[12], m[13], m[14]];
     }, idOrUuid);
   }
 
@@ -96,12 +154,45 @@ export class R3FFixture {
     });
   }
 
+  /**
+   * Compare two scene snapshots: returns added nodes, removed nodes, and
+   * property changes (name, type, testId, visible, position, rotation, scale).
+   * Use after taking snapshots before/after an action to assert on scene changes.
+   */
+  diffSnapshots(before: SceneSnapshot, after: SceneSnapshot): SceneDiff {
+    return diffSnapshotsHelper(before, after);
+  }
+
+  /**
+   * Run an async action and return how many objects were added and removed
+   * compared to before the action. Uses snapshots before/after so add and
+   * remove are both counted correctly when both happen.
+   */
+  async trackObjectCount(action: () => Promise<void>): Promise<{ added: number; removed: number }> {
+    const before = await this.snapshot();
+    if (!before) throw new Error('trackObjectCount: no snapshot before (bridge not ready?)');
+    await action();
+    const after = await this.snapshot();
+    if (!after) throw new Error('trackObjectCount: no snapshot after (bridge not ready?)');
+    const diff = diffSnapshotsHelper(before, after);
+    return { added: diff.added.length, removed: diff.removed.length };
+  }
+
   /** Get the total number of tracked objects. */
   async getCount(): Promise<number> {
     return this._page.evaluate(() => {
       const api = window.__R3F_DOM__;
       return api ? api.getCount() : 0;
     });
+  }
+
+  /**
+   * Return a Playwright locator for the R3F canvas element the bridge is attached to.
+   * Use for canvas-level actions (e.g. click at a position, screenshot the canvas).
+   * The canvas has `data-r3f-canvas="true"` set by the bridge.
+   */
+  getCanvasLocator(): Locator {
+    return this._page.locator('[data-r3f-canvas]');
   }
 
   /**
@@ -112,6 +203,28 @@ export class R3FFixture {
     return this._page.evaluate((t) => {
       const api = window.__R3F_DOM__;
       return api ? api.getByType(t) : [];
+    }, type);
+  }
+
+  /**
+   * Get all objects with a given geometry type (e.g. "BoxGeometry", "BufferGeometry").
+   * Only meshes/points/lines have geometryType.
+   */
+  async getByGeometryType(type: string): Promise<ObjectMetadata[]> {
+    return this._page.evaluate((t) => {
+      const api = window.__R3F_DOM__;
+      return api ? api.getByGeometryType(t) : [];
+    }, type);
+  }
+
+  /**
+   * Get all objects with a given material type (e.g. "MeshStandardMaterial").
+   * Only meshes/points/lines have materialType.
+   */
+  async getByMaterialType(type: string): Promise<ObjectMetadata[]> {
+    return this._page.evaluate((t) => {
+      const api = window.__R3F_DOM__;
+      return api ? api.getByMaterialType(t) : [];
     }, type);
   }
 
@@ -317,6 +430,17 @@ export class R3FFixture {
    */
   async waitForNewObject(options?: WaitForNewObjectOptions): Promise<WaitForNewObjectResult> {
     return waitForNewObject(this._page, options);
+  }
+
+  /**
+   * Wait until an object (by testId or uuid) is no longer in the scene.
+   * Use for delete flows: trigger removal, then wait until the object is gone.
+   */
+  async waitForObjectRemoved(
+    idOrUuid: string,
+    options?: WaitForObjectRemovedOptions,
+  ): Promise<void> {
+    return waitForObjectRemoved(this._page, idOrUuid, options);
   }
 
   // -----------------------------------------------------------------------

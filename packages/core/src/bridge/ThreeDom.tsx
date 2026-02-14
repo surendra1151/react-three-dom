@@ -30,7 +30,7 @@ export interface ThreeDomProps {
   /** Objects to process per amortized batch per frame. Default: 500 */
   batchSize?: number;
   /** Max time budget (ms) for sync work per frame. Default: 0.5 */
-  timeBudgetMs?: number;
+  syncBudgetMs?: number;
   /** Max materialized DOM nodes (LRU eviction). Default: 2000 */
   maxDomNodes?: number;
   /** Initial DOM tree materialization depth. Default: 3 */
@@ -138,8 +138,12 @@ function exposeGlobalAPI(store: ObjectStore): void {
     getByTestId: (id: string) => store.getByTestId(id),
     getByUuid: (uuid: string) => store.getByUuid(uuid),
     getByName: (name: string) => store.getByName(name),
+    getChildren: (idOrUuid: string) => store.getChildren(idOrUuid),
+    getParent: (idOrUuid: string) => store.getParent(idOrUuid),
     getCount: () => store.getCount(),
     getByType: (type: string) => store.getByType(type),
+    getByGeometryType: (type: string) => store.getByGeometryType(type),
+    getByMaterialType: (type: string) => store.getByMaterialType(type),
     getByUserData: (key: string, value?: unknown) => store.getByUserData(key, value),
     getCountByType: (type: string) => store.getCountByType(type),
     getObjects: (ids: string[]) => {
@@ -224,7 +228,7 @@ function setElementRect(el: HTMLElement, l: number, t: number, w: number, h: num
 export function ThreeDom({
   root = '#three-dom-root',
   batchSize = 500,
-  timeBudgetMs = 0.5,
+  syncBudgetMs = 0.5,
   maxDomNodes = 2000,
   initialDepth = 3,
   enabled = true,
@@ -248,6 +252,7 @@ export function ThreeDom({
     r3fLog('setup', 'ThreeDom effect started', { enabled, debug, root, maxDomNodes });
 
     const canvas = gl.domElement;
+    canvas.setAttribute('data-r3f-canvas', 'true');
     const canvasParent = canvas.parentElement!;
 
     // ---- Create / resolve root element ----
@@ -291,6 +296,63 @@ export function ThreeDom({
     let currentApi: R3FDOM | undefined;
 
     try {
+      // ---- Check WebGL availability (headless / CI often has no WebGL) ----
+      const webglContext = gl.getContext();
+      if (!webglContext || (webglContext as WebGLRenderingContext).isContextLost?.()) {
+        const msg =
+          'WebGL context not available. For headless Chromium, add --enable-webgl and optionally --use-gl=angle --use-angle=swiftshader-webgl to launch args.';
+        window.__R3F_DOM__ = {
+          _ready: false,
+          _error: msg,
+          getByTestId: () => null,
+          getByUuid: () => null,
+          getByName: () => [],
+          getChildren: () => [],
+          getParent: () => null,
+          getCount: () => 0,
+          getByType: () => [],
+          getByGeometryType: () => [],
+          getByMaterialType: () => [],
+          getByUserData: () => [],
+          getCountByType: () => 0,
+          getObjects: (ids: string[]) => {
+            const result: Record<string, null> = {};
+            for (const id of ids) result[id] = null;
+            return result;
+          },
+          snapshot: () => ({
+            timestamp: 0,
+            objectCount: 0,
+            tree: {
+              uuid: '',
+              name: '',
+              type: 'Scene',
+              visible: true,
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              children: [],
+            },
+          }),
+          inspect: () => null,
+          click: () => {},
+          doubleClick: () => {},
+          contextMenu: () => {},
+          hover: () => {},
+          drag: async () => {},
+          wheel: () => {},
+          pointerMiss: () => {},
+          drawPath: async () => ({ eventCount: 0, pointCount: 0 }),
+          select: () => {},
+          clearSelection: () => {},
+          getSelection: () => [],
+          getObject3D: () => null,
+          version,
+        };
+        r3fLog('setup', msg);
+        return;
+      }
+
       // ---- Create store and mirror ----
       store = new ObjectStore();
       mirror = new DomMirror(store, maxDomNodes);
@@ -363,8 +425,12 @@ export function ThreeDom({
         getByTestId: () => null,
         getByUuid: () => null,
         getByName: () => [],
+        getChildren: () => [],
+        getParent: () => null,
         getCount: () => 0,
         getByType: () => [],
+        getByGeometryType: () => [],
+        getByMaterialType: () => [],
         getByUserData: () => [],
         getCountByType: () => 0,
         getObjects: (ids: string[]) => {
@@ -400,6 +466,7 @@ export function ThreeDom({
       if (selectionManager) selectionManager.dispose();
       if (mirror) mirror.dispose();
       if (store) store.dispose();
+      canvas.removeAttribute('data-r3f-canvas');
       if (createdRoot && rootElement?.parentNode) {
         rootElement.parentNode.removeChild(rootElement);
       }
@@ -436,13 +503,13 @@ export function ThreeDom({
     }
 
     // Layer 2: Amortized attribute sync
-    const budgetRemaining = timeBudgetMs - (performance.now() - start);
+    const budgetRemaining = syncBudgetMs - (performance.now() - start);
     if (budgetRemaining > 0.1) {
       const objects = store.getFlatList();
       if (objects.length > 0) {
         const end = Math.min(cursorRef.current + batchSize, objects.length);
         for (let i = cursorRef.current; i < end; i++) {
-          if (performance.now() - start > timeBudgetMs) break;
+          if (performance.now() - start > syncBudgetMs) break;
           const obj = objects[i];
           const changed = store.update(obj);
           if (changed) mirror.syncAttributes(obj);

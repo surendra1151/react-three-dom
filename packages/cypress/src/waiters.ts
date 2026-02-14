@@ -345,4 +345,74 @@ export function registerWaiters(): void {
       });
     },
   );
+
+  // -----------------------------------------------------------------------
+  // r3fWaitForObjectRemoved — wait until an object is no longer in the scene
+  // -----------------------------------------------------------------------
+
+  Cypress.Commands.add(
+    'r3fWaitForObjectRemoved',
+    (
+      idOrUuid: string,
+      options: { bridgeTimeout?: number; pollIntervalMs?: number; timeout?: number } = {},
+    ) => {
+      const {
+        bridgeTimeout = 30_000,
+        pollIntervalMs = 100,
+        timeout = 10_000,
+      } = options;
+
+      const bridgeStart = Date.now();
+
+      function waitForBridge(): Cypress.Chainable<void> {
+        if (Date.now() - bridgeStart > bridgeTimeout) {
+          throw new Error(
+            `r3fWaitForObjectRemoved("${idOrUuid}") timed out after ${bridgeTimeout}ms ` +
+            `waiting for the bridge.`,
+          );
+        }
+
+        return cy.window({ log: false }).then((win) => {
+          const state = getBridgeState(win);
+          assertBridgeNotErrored(state);
+
+          if (state.exists && state.ready) {
+            return pollForRemoved();
+          }
+
+          return cy.wait(pollIntervalMs, { log: false }).then(() => waitForBridge());
+        });
+      }
+
+      const removeDeadline = Date.now() + timeout;
+
+      function pollForRemoved(): Cypress.Chainable<void> {
+        if (Date.now() > removeDeadline) {
+          throw new Error(
+            `r3fWaitForObjectRemoved("${idOrUuid}") timed out after ${timeout}ms. Object is still in the scene.`,
+          );
+        }
+
+        return cy.window({ log: false }).then((win) => {
+          const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+          if (!api || !api._ready) {
+            return cy.wait(pollIntervalMs, { log: false }).then(() => pollForRemoved());
+          }
+
+          const stillPresent = (api.getByTestId(idOrUuid) ?? api.getByUuid(idOrUuid)) !== null;
+          if (!stillPresent) {
+            Cypress.log({
+              name: 'r3fWaitForObjectRemoved',
+              message: `"${idOrUuid}" removed`,
+            });
+            return;
+          }
+
+          return cy.wait(pollIntervalMs, { log: false }).then(() => pollForRemoved());
+        });
+      }
+
+      return waitForBridge();
+    },
+  );
 }
