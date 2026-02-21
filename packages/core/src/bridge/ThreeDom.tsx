@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
-import { Box3, Vector3 } from 'three';
-import type { Object3D, Camera } from 'three';
+import type { Scene } from 'three';
 import { ObjectStore } from '../store/ObjectStore';
 import { DomMirror } from '../mirror/DomMirror';
 import { ensureCustomElements } from '../mirror/CustomElements';
@@ -16,6 +15,9 @@ import { drawPath as drawPathFn } from '../interactions/drawPath';
 import { setInteractionState, clearInteractionState } from '../interactions/resolve';
 import { SelectionManager } from '../highlight/SelectionManager';
 import { Highlighter } from '../highlight/Highlighter';
+import { InspectController } from '../highlight/InspectController';
+import { RaycastAccelerator } from '../highlight/RaycastAccelerator';
+import { resolveSelectionDisplayTarget } from '../highlight/selectionDisplayTarget';
 import { version } from '../version';
 import { r3fLog, enableDebug } from '../debug';
 import type { R3FDOM, ObjectMetadata } from '../types';
@@ -39,6 +41,8 @@ export interface ThreeDomProps {
   enabled?: boolean;
   /** Enable debug logging to browser console. Default: false */
   debug?: boolean;
+  /** Enable inspect mode on mount. Default: false */
+  inspect?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -49,84 +53,13 @@ let _store: ObjectStore | null = null;
 let _mirror: DomMirror | null = null;
 let _selectionManager: SelectionManager | null = null;
 let _highlighter: Highlighter | null = null;
+let _inspectController: InspectController | null = null;
 
 export function getStore(): ObjectStore | null { return _store; }
 export function getMirror(): DomMirror | null { return _mirror; }
 export function getSelectionManager(): SelectionManager | null { return _selectionManager; }
 export function getHighlighter(): Highlighter | null { return _highlighter; }
-
-// ---------------------------------------------------------------------------
-// 3D → Screen projection for DOM element positioning
-// ---------------------------------------------------------------------------
-
-const _box = /* @__PURE__ */ new Box3();
-const _v = /* @__PURE__ */ new Vector3();
-const _corners: Vector3[] = Array.from({ length: 8 }, () => new Vector3());
-
-/**
- * Project a 3D object's bounding box to screen-space pixel coordinates
- * relative to the canvas element.
- */
-function projectToScreenRect(
-  obj: Object3D,
-  camera: Camera,
-  canvasRect: { width: number; height: number },
-): { left: number; top: number; width: number; height: number } | null {
-  _box.setFromObject(obj);
-  if (_box.isEmpty()) return null;
-
-  const { min, max } = _box;
-  _corners[0].set(min.x, min.y, min.z);
-  _corners[1].set(min.x, min.y, max.z);
-  _corners[2].set(min.x, max.y, min.z);
-  _corners[3].set(min.x, max.y, max.z);
-  _corners[4].set(max.x, min.y, min.z);
-  _corners[5].set(max.x, min.y, max.z);
-  _corners[6].set(max.x, max.y, min.z);
-  _corners[7].set(max.x, max.y, max.z);
-
-  let sxMin = Infinity, syMin = Infinity;
-  let sxMax = -Infinity, syMax = -Infinity;
-  let anyInFront = false;
-  let anyBehind = false;
-
-  for (const corner of _corners) {
-    _v.copy(corner).project(camera);
-
-    if (_v.z >= 1) {
-      anyBehind = true;
-      continue;
-    }
-
-    anyInFront = true;
-    const sx = ((_v.x + 1) / 2) * canvasRect.width;
-    const sy = ((1 - _v.y) / 2) * canvasRect.height;
-    sxMin = Math.min(sxMin, sx);
-    syMin = Math.min(syMin, sy);
-    sxMax = Math.max(sxMax, sx);
-    syMax = Math.max(syMax, sy);
-  }
-
-  if (!anyInFront) return null;
-
-  if (anyBehind) {
-    sxMin = Math.min(sxMin, 0);
-    syMin = Math.min(syMin, 0);
-    sxMax = Math.max(sxMax, canvasRect.width);
-    syMax = Math.max(syMax, canvasRect.height);
-  }
-
-  sxMin = Math.max(0, sxMin);
-  syMin = Math.max(0, syMin);
-  sxMax = Math.min(canvasRect.width, sxMax);
-  syMax = Math.min(canvasRect.height, syMax);
-
-  const w = sxMax - sxMin;
-  const h = syMax - syMin;
-  if (w < 1 || h < 1) return null;
-
-  return { left: sxMin, top: syMin, width: w, height: h };
-}
+export function getInspectController(): InspectController | null { return _inspectController; }
 
 // ---------------------------------------------------------------------------
 // Global API exposure (window.__R3F_DOM__)
@@ -155,7 +88,7 @@ function exposeGlobalAPI(store: ObjectStore): void {
       return result;
     },
     snapshot: () => createSnapshot(store),
-    inspect: (idOrUuid: string) => store.inspect(idOrUuid),
+    inspect: (idOrUuid: string, options?: { includeGeometryData?: boolean }) => store.inspect(idOrUuid, options),
     click: (idOrUuid: string) => { click3D(idOrUuid); },
     doubleClick: (idOrUuid: string) => { doubleClick3D(idOrUuid); },
     contextMenu: (idOrUuid: string) => { contextMenu3D(idOrUuid); },
@@ -177,17 +110,22 @@ function exposeGlobalAPI(store: ObjectStore): void {
         ? _selectionManager.getSelected().map((o) => o.uuid)
         : [],
     getObject3D: (idOrUuid: string) => store.getObject3D(idOrUuid),
+    getSelectionDisplayTarget: (uuid: string) =>
+      resolveSelectionDisplayTarget((id) => store.getObject3D(id), uuid) ?? uuid,
+    setInspectMode: (on: boolean) => {
+      r3fLog('inspect', 'Global API setInspectMode called', { on });
+      if (on) {
+        _inspectController?.enable();
+      } else {
+        _inspectController?.disable();
+      }
+    },
+    sweepOrphans: () => store.sweepOrphans(),
     version,
   };
   window.__R3F_DOM__ = api;
 }
 
-/**
- * Remove the global API. In React Strict Mode the component unmounts then
- * remounts; if we delete synchronously, the next effect has not run yet and
- * tests waiting for __R3F_DOM__ can miss it. Defer deletion so that a
- * remounted instance can set the bridge first; we only delete if it's still ours.
- */
 function removeGlobalAPI(onlyIfEquals?: R3FDOM): void {
   r3fLog('bridge', 'removeGlobalAPI called (deferred)');
   if (onlyIfEquals !== undefined) {
@@ -206,19 +144,56 @@ function removeGlobalAPI(onlyIfEquals?: R3FDOM): void {
   }
 }
 
-/** Set element position/size, only writing if values changed. */
-function setElementRect(el: HTMLElement, l: number, t: number, w: number, h: number): void {
-  const d = el.dataset;
-  if (d._l !== String(l) || d._t !== String(t) || d._w !== String(w) || d._h !== String(h)) {
-    el.style.left = `${l}px`;
-    el.style.top = `${t}px`;
-    el.style.width = `${w}px`;
-    el.style.height = `${h}px`;
-    d._l = String(l);
-    d._t = String(t);
-    d._w = String(w);
-    d._h = String(h);
-  }
+// ---------------------------------------------------------------------------
+// Stub bridge for error / no-WebGL states
+// ---------------------------------------------------------------------------
+
+function createStubBridge(error?: string): R3FDOM {
+  return {
+    _ready: false,
+    _error: error,
+    getByTestId: () => null,
+    getByUuid: () => null,
+    getByName: () => [],
+    getChildren: () => [],
+    getParent: () => null,
+    getCount: () => 0,
+    getByType: () => [],
+    getByGeometryType: () => [],
+    getByMaterialType: () => [],
+    getByUserData: () => [],
+    getCountByType: () => 0,
+    getObjects: (ids: string[]) => {
+      const result: Record<string, null> = {};
+      for (const id of ids) result[id] = null;
+      return result;
+    },
+    snapshot: () => ({
+      timestamp: 0,
+      objectCount: 0,
+      tree: {
+        uuid: '', name: '', type: 'Scene', visible: true,
+        position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], children: [],
+      },
+    }),
+    inspect: () => null,
+    click: () => {},
+    doubleClick: () => {},
+    contextMenu: () => {},
+    hover: () => {},
+    drag: async () => {},
+    wheel: () => {},
+    pointerMiss: () => {},
+    drawPath: async () => ({ eventCount: 0, pointCount: 0 }),
+    select: () => {},
+    clearSelection: () => {},
+    getSelection: () => [],
+    getObject3D: () => null,
+    getSelectionDisplayTarget: (uuid: string) => uuid,
+    setInspectMode: () => {},
+    sweepOrphans: () => 0,
+    version,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -233,13 +208,14 @@ export function ThreeDom({
   initialDepth = 3,
   enabled = true,
   debug = false,
+  inspect: inspectProp = false,
 }: ThreeDomProps = {}) {
   const scene = useThree((s) => s.scene);
   const camera = useThree((s) => s.camera);
   const gl = useThree((s) => s.gl);
   const size = useThree((s) => s.size);
   const cursorRef = useRef(0);
-  const positionCursorRef = useRef(0);
+  const lastSweepRef = useRef(0);
 
   // -----------------------------------------------------------------------
   // Setup
@@ -271,28 +247,19 @@ export function ThreeDom({
       createdRoot = true;
     }
 
-    // Place the mirror root INSIDE the Canvas wrapper as a sibling of the
-    // <canvas>. With position:absolute and z-index:10, Chrome DevTools will
-    // natively highlight our mirror elements when hovering in the Elements tab.
     canvasParent.style.position = canvasParent.style.position || 'relative';
     canvasParent.appendChild(rootElement);
 
-    rootElement.style.cssText = [
-      'position: absolute',
-      'top: 0',
-      'left: 0',
-      'width: 100%',
-      'height: 100%',
-      'pointer-events: none',
-      'overflow: hidden',
-      'z-index: 10',
-    ].join(';');
+    rootElement.style.cssText = 'width:0;height:0;overflow:hidden;pointer-events:none;opacity:0;';
 
-    // Variables declared outside try so cleanup can access them
     let store: ObjectStore | null = null;
     let mirror: DomMirror | null = null;
     let unpatch: (() => void) | null = null;
+    let cancelAsyncReg: (() => void) | null = null;
     let selectionManager: SelectionManager | null = null;
+    let highlighter: Highlighter | null = null;
+    let raycastAccelerator: RaycastAccelerator | null = null;
+    let inspectController: InspectController | null = null;
     let currentApi: R3FDOM | undefined;
 
     try {
@@ -301,54 +268,7 @@ export function ThreeDom({
       if (!webglContext || (webglContext as WebGLRenderingContext).isContextLost?.()) {
         const msg =
           'WebGL context not available. For headless Chromium, add --enable-webgl and optionally --use-gl=angle --use-angle=swiftshader-webgl to launch args.';
-        window.__R3F_DOM__ = {
-          _ready: false,
-          _error: msg,
-          getByTestId: () => null,
-          getByUuid: () => null,
-          getByName: () => [],
-          getChildren: () => [],
-          getParent: () => null,
-          getCount: () => 0,
-          getByType: () => [],
-          getByGeometryType: () => [],
-          getByMaterialType: () => [],
-          getByUserData: () => [],
-          getCountByType: () => 0,
-          getObjects: (ids: string[]) => {
-            const result: Record<string, null> = {};
-            for (const id of ids) result[id] = null;
-            return result;
-          },
-          snapshot: () => ({
-            timestamp: 0,
-            objectCount: 0,
-            tree: {
-              uuid: '',
-              name: '',
-              type: 'Scene',
-              visible: true,
-              position: [0, 0, 0],
-              rotation: [0, 0, 0],
-              scale: [1, 1, 1],
-              children: [],
-            },
-          }),
-          inspect: () => null,
-          click: () => {},
-          doubleClick: () => {},
-          contextMenu: () => {},
-          hover: () => {},
-          drag: async () => {},
-          wheel: () => {},
-          pointerMiss: () => {},
-          drawPath: async () => ({ eventCount: 0, pointCount: 0 }),
-          select: () => {},
-          clearSelection: () => {},
-          getSelection: () => [],
-          getObject3D: () => null,
-          version,
-        };
+        window.__R3F_DOM__ = createStubBridge(msg);
         r3fLog('setup', msg);
         return;
       }
@@ -360,19 +280,39 @@ export function ThreeDom({
       r3fLog('setup', 'Store and mirror created');
 
       ensureCustomElements(store);
-      store.registerTree(scene);
-      r3fLog('setup', `Registered scene tree: ${store.getCount()} objects`);
 
-      mirror.materializeSubtree(scene.uuid, initialDepth);
-
+      // Install patch BEFORE async registration so any objects added to the
+      // scene while registration is in progress are caught by the patch.
       unpatch = patchObject3D(store, mirror);
       setInteractionState(store, camera, gl, size);
       r3fLog('setup', 'Object3D patched, interaction state set');
 
-      // Keep SelectionManager available for the global API and Inspector
+      // Register the scene root synchronously (so it's immediately available)
+      // then register the rest of the tree asynchronously to avoid blocking.
+      store.register(scene);
+      mirror.materializeSubtree(scene.uuid, initialDepth);
+      cancelAsyncReg = store.registerTreeAsync(scene);
+      r3fLog('setup', `Async registration started for scene tree`);
+
+      // ---- Selection, highlighting, and inspect controller ----
       selectionManager = new SelectionManager();
+      highlighter = new Highlighter();
+      highlighter.attach(scene as Scene, selectionManager, camera, gl, store);
+      raycastAccelerator = new RaycastAccelerator(store);
+
+      inspectController = new InspectController({
+        camera,
+        renderer: gl,
+        selectionManager,
+        highlighter,
+        raycastAccelerator,
+        mirror,
+        store,
+      });
+
       _selectionManager = selectionManager;
-      _highlighter = null;
+      _highlighter = highlighter;
+      _inspectController = inspectController;
 
       exposeGlobalAPI(store);
       r3fLog('bridge', 'exposeGlobalAPI called — bridge is live, _ready=true');
@@ -380,86 +320,39 @@ export function ThreeDom({
       _store = store;
       _mirror = mirror;
 
-      // ---- Initial full position sync ----
-      const initialCanvasRect = canvas.getBoundingClientRect();
-      const allObjects = store.getFlatList();
-      for (const obj of allObjects) {
-        if (obj.userData?.__r3fdom_internal) continue;
-        const el = mirror.getElement(obj.uuid);
-        if (!el) continue;
+      if (inspectProp) {
+        inspectController.enable();
+      }
 
-        if (obj.type === 'Scene') {
-          setElementRect(el, 0, 0, Math.round(initialCanvasRect.width), Math.round(initialCanvasRect.height));
-          continue;
-        }
-
-        const rect = projectToScreenRect(obj, camera, initialCanvasRect);
-        if (rect) {
-          let parentLeft = 0;
-          let parentTop = 0;
-          if (obj.parent && obj.parent.type !== 'Scene') {
-            const parentRect = projectToScreenRect(obj.parent, camera, initialCanvasRect);
-            if (parentRect) {
-              parentLeft = Math.round(parentRect.left);
-              parentTop = Math.round(parentRect.top);
-            }
-          }
-          setElementRect(
-            el,
-            Math.round(rect.left) - parentLeft,
-            Math.round(rect.top) - parentTop,
-            Math.round(rect.width),
-            Math.round(rect.height),
-          );
-        }
+      if (debug) {
+        const inspectStatus = inspectProp ? 'on' : 'off';
+        // eslint-disable-next-line no-console
+        console.log(
+          '%c[react-three-dom]%c v' + version + ' — ' + store.getCount() + ' objects · inspect: ' + inspectStatus + '\n' +
+          '  %c→%c Toggle inspect: %c__R3F_DOM__.setInspectMode(true|false)%c\n' +
+          '  %c→%c Hover 3D objects to highlight + auto-reveal in Elements tab',
+          'background:#1a73e8;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold',
+          'color:inherit',
+          'color:#1a73e8', 'color:inherit',
+          'color:#e8a317;font-family:monospace', 'color:inherit',
+          'color:#1a73e8', 'color:inherit',
+        );
       }
     } catch (err) {
-      // Setup failed — expose a non-ready bridge so tests get a clear error
-      // instead of a timeout with no diagnostics.
       const errorMsg = err instanceof Error ? err.message : String(err);
       r3fLog('setup', 'ThreeDom setup failed', err);
       console.error('[react-three-dom] Setup failed:', err);
-      window.__R3F_DOM__ = {
-        _ready: false,
-        _error: errorMsg,
-        getByTestId: () => null,
-        getByUuid: () => null,
-        getByName: () => [],
-        getChildren: () => [],
-        getParent: () => null,
-        getCount: () => 0,
-        getByType: () => [],
-        getByGeometryType: () => [],
-        getByMaterialType: () => [],
-        getByUserData: () => [],
-        getCountByType: () => 0,
-        getObjects: (ids: string[]) => {
-          const result: Record<string, null> = {};
-          for (const id of ids) result[id] = null;
-          return result;
-        },
-        snapshot: () => ({ timestamp: 0, objectCount: 0, tree: { uuid: '', name: '', type: 'Scene', visible: true, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], children: [] } }),
-        inspect: () => null,
-        click: () => {},
-        doubleClick: () => {},
-        contextMenu: () => {},
-        hover: () => {},
-        drag: async () => {},
-        wheel: () => {},
-        pointerMiss: () => {},
-        drawPath: async () => ({ eventCount: 0, pointCount: 0 }),
-        select: () => {},
-        clearSelection: () => {},
-        getSelection: () => [],
-        getObject3D: () => null,
-        version,
-      };
+      window.__R3F_DOM__ = createStubBridge(errorMsg);
       currentApi = window.__R3F_DOM__;
     }
 
     // ---- Cleanup ----
     return () => {
       r3fLog('setup', 'ThreeDom cleanup started');
+      if (cancelAsyncReg) cancelAsyncReg();
+      if (inspectController) inspectController.dispose();
+      if (raycastAccelerator) raycastAccelerator.dispose();
+      if (highlighter) highlighter.dispose();
       if (unpatch) unpatch();
       removeGlobalAPI(currentApi);
       clearInteractionState();
@@ -474,10 +367,11 @@ export function ThreeDom({
       _mirror = null;
       _selectionManager = null;
       _highlighter = null;
+      _inspectController = null;
       if (debug) enableDebug(false);
       r3fLog('setup', 'ThreeDom cleanup complete');
     };
-  }, [scene, camera, gl, size, enabled, root, maxDomNodes, initialDepth, debug]);
+  }, [scene, camera, gl, size, enabled, root, maxDomNodes, initialDepth, debug, inspectProp]);
 
   // -----------------------------------------------------------------------
   // Per-frame sync
@@ -487,81 +381,47 @@ export function ThreeDom({
     if (!enabled || !_store || !_mirror) return;
 
     try {
-    setInteractionState(_store, camera, gl, size);
+      setInteractionState(_store, camera, gl, size);
 
-    const store = _store;
-    const mirror = _mirror;
-    const canvas = gl.domElement;
-    const canvasRect = canvas.getBoundingClientRect();
-    const start = performance.now();
+      if (_inspectController) _inspectController.updateCamera(camera);
 
-    // Layer 3: Sync priority (dirty) objects first
-    const dirtyObjects = store.drainDirtyQueue();
-    for (const obj of dirtyObjects) {
-      store.update(obj);
-      mirror.syncAttributes(obj);
-    }
+      const store = _store;
+      const mirror = _mirror;
+      const start = performance.now();
 
-    // Layer 2: Amortized attribute sync
-    const budgetRemaining = syncBudgetMs - (performance.now() - start);
-    if (budgetRemaining > 0.1) {
-      const objects = store.getFlatList();
-      if (objects.length > 0) {
-        const end = Math.min(cursorRef.current + batchSize, objects.length);
-        for (let i = cursorRef.current; i < end; i++) {
-          if (performance.now() - start > syncBudgetMs) break;
-          const obj = objects[i];
-          const changed = store.update(obj);
-          if (changed) mirror.syncAttributes(obj);
-        }
-        cursorRef.current = end >= objects.length ? 0 : end;
+      // Sync priority (dirty) objects first
+      const dirtyObjects = store.drainDirtyQueue();
+      for (const obj of dirtyObjects) {
+        store.update(obj);
+        mirror.syncAttributes(obj);
       }
-    }
 
-    // Layer 1: Amortized DOM position sync — project 3D bounds to screen.
-    // Coordinates are parent-relative since elements are nested.
-    const objects = store.getFlatList();
-    if (objects.length > 0) {
-      const posEnd = Math.min(positionCursorRef.current + 50, objects.length);
-      for (let i = positionCursorRef.current; i < posEnd; i++) {
-        const obj = objects[i];
-        if (obj.userData?.__r3fdom_internal) continue;
-        const el = mirror.getElement(obj.uuid);
-        if (!el) continue;
-
-        if (obj.type === 'Scene') {
-          setElementRect(el, 0, 0, Math.round(canvasRect.width), Math.round(canvasRect.height));
-          continue;
-        }
-
-        const rect = projectToScreenRect(obj, camera, canvasRect);
-        if (rect) {
-          let parentLeft = 0;
-          let parentTop = 0;
-          if (obj.parent && obj.parent.type !== 'Scene') {
-            const parentRect = projectToScreenRect(obj.parent, camera, canvasRect);
-            if (parentRect) {
-              parentLeft = Math.round(parentRect.left);
-              parentTop = Math.round(parentRect.top);
-            }
+      // Amortized attribute sync
+      const budgetRemaining = syncBudgetMs - (performance.now() - start);
+      if (budgetRemaining > 0.1) {
+        const objects = store.getFlatList();
+        if (objects.length > 0) {
+          const end = Math.min(cursorRef.current + batchSize, objects.length);
+          for (let i = cursorRef.current; i < end; i++) {
+            if (performance.now() - start > syncBudgetMs) break;
+            const obj = objects[i];
+            const changed = store.update(obj);
+            if (changed) mirror.syncAttributes(obj);
           }
-
-          const l = Math.round(rect.left) - parentLeft;
-          const t = Math.round(rect.top) - parentTop;
-          const w = Math.round(rect.width);
-          const h = Math.round(rect.height);
-
-          setElementRect(el, l, t, w, h);
-          if (el.style.display === 'none') el.style.display = 'block';
-        } else {
-          if (el.style.display !== 'none') el.style.display = 'none';
+          cursorRef.current = end >= objects.length ? 0 : end;
         }
       }
-      positionCursorRef.current = posEnd >= objects.length ? 0 : posEnd;
-    }
+
+      // Update 3D highlights (sync transforms with source objects)
+      if (_highlighter) _highlighter.update();
+
+      // Periodic orphan sweep (~every 30s) to prevent memory leaks
+      const now = performance.now();
+      if (now - lastSweepRef.current > 30_000) {
+        lastSweepRef.current = now;
+        store.sweepOrphans();
+      }
     } catch (err) {
-      // Per-frame sync failure should not crash the render loop.
-      // Log once and continue — the next frame will retry.
       r3fLog('sync', 'Per-frame sync error', err);
     }
   });

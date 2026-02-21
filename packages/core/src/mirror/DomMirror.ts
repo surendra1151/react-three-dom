@@ -2,6 +2,7 @@ import type { Object3D } from 'three';
 import type { ObjectStore } from '../store/ObjectStore';
 import { getTagForType } from './CustomElements';
 import { applyAttributes } from './attributes';
+import { r3fLog } from '../debug';
 
 // ---------------------------------------------------------------------------
 // LRU tracking node (doubly-linked list for O(1) eviction)
@@ -56,6 +57,14 @@ export class DomMirror {
   // UUID → parent UUID mapping for DOM tree structure
   private _parentMap = new Map<string, string | null>();
 
+  /** When true, mirror elements use pointer-events: auto so DevTools element picker can select them. */
+  private _inspectMode = false;
+
+  /** Async materialization state for inspect mode */
+  private _asyncQueue: string[] = [];
+  private _asyncIdleHandle: number | null = null;
+  private _asyncBatchSize = 200;
+
   constructor(store: ObjectStore, maxNodes = 2000) {
     this._store = store;
     this._maxNodes = maxNodes;
@@ -71,6 +80,33 @@ export class DomMirror {
    */
   setRoot(rootElement: HTMLElement): void {
     this._rootElement = rootElement;
+  }
+
+  /**
+   * Enable or disable "inspect mode". When turning on, kicks off async
+   * chunked materialization so the full tree becomes browsable in the
+   * Elements tab without blocking the main thread.
+   *
+   * At BIM scale (100k-200k objects) the old synchronous loop would freeze
+   * the page for 2-10s. The new approach uses requestIdleCallback to
+   * spread work across idle frames (~200 nodes per idle slice, ~5ms each).
+   */
+  setInspectMode(on: boolean): void {
+    if (this._inspectMode === on) return;
+    this._inspectMode = on;
+
+    if (on) {
+      this._startAsyncMaterialization();
+    } else {
+      this._cancelAsyncMaterialization();
+    }
+
+    r3fLog('inspect', 'setInspectMode', { on, nodeCount: this._nodes.size });
+  }
+
+  /** Whether inspect mode is currently enabled. */
+  getInspectMode(): boolean {
+    return this._inspectMode;
   }
 
   /**
@@ -111,9 +147,7 @@ export class DomMirror {
     const tag = getTagForType(meta.type);
     const element = document.createElement(tag);
 
-    // Style as positioned block so Chrome DevTools can highlight it.
-    // Position/dimensions are updated per-frame by ThreeDom's projection sync.
-    element.style.cssText = 'display:block;position:absolute;pointer-events:none;box-sizing:border-box;';
+    element.style.cssText = 'display:contents;';
 
     // Apply all Tier 1 attributes
     const prevAttrs = new Map<string, string>();
@@ -266,6 +300,24 @@ export class DomMirror {
   }
 
   /**
+   * Get or lazily materialize a DOM element for an object.
+   * Also materializes the ancestor chain so the element is correctly
+   * nested in the DOM tree. Used by InspectController so that
+   * hover/click always produces a valid mirror element regardless
+   * of whether async materialization has reached it yet.
+   */
+  getOrMaterialize(uuid: string): HTMLElement | null {
+    const existing = this._nodes.get(uuid);
+    if (existing) {
+      this._lruTouch(existing.lruNode);
+      return existing.element;
+    }
+
+    this._materializeAncestorChain(uuid);
+    return this.materialize(uuid);
+  }
+
+  /**
    * Check if an object has a materialized DOM node.
    */
   isMaterialized(uuid: string): boolean {
@@ -345,6 +397,7 @@ export class DomMirror {
    * Remove all materialized DOM nodes and reset state.
    */
   dispose(): void {
+    this._cancelAsyncMaterialization();
     for (const [, node] of this._nodes) {
       node.element.remove();
     }
@@ -386,6 +439,100 @@ export class DomMirror {
       // Parent not materialized — append to mirror root as orphan
       // (will be reparented when parent is materialized)
       this._rootElement.appendChild(element);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: Ancestor chain materialization
+  // -------------------------------------------------------------------------
+
+  /**
+   * Materialize all ancestors of a uuid from root down, so the target
+   * element will be correctly nested when materialized.
+   */
+  private _materializeAncestorChain(uuid: string): void {
+    const chain: string[] = [];
+    let currentUuid: string | null = uuid;
+
+    while (currentUuid) {
+      if (this._nodes.has(currentUuid)) break;
+      const meta = this._store.getByUuid(currentUuid);
+      if (!meta) break;
+      chain.push(currentUuid);
+      currentUuid = meta.parentUuid;
+    }
+
+    // Materialize from root-most ancestor down (skip the target itself)
+    for (let i = chain.length - 1; i > 0; i--) {
+      this.materialize(chain[i]);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: Async chunked materialization for inspect mode
+  // -------------------------------------------------------------------------
+
+  private _startAsyncMaterialization(): void {
+    this._cancelAsyncMaterialization();
+
+    const flatList = this._store.getFlatList();
+    this._asyncQueue = [];
+    for (const obj of flatList) {
+      if (obj.userData?.__r3fdom_internal) continue;
+      if (this._nodes.has(obj.uuid)) continue;
+      this._asyncQueue.push(obj.uuid);
+    }
+
+    if (this._asyncQueue.length === 0) return;
+
+    r3fLog('inspect', `Async materialization started: ${this._asyncQueue.length} objects queued`);
+    this._scheduleAsyncChunk();
+  }
+
+  private _cancelAsyncMaterialization(): void {
+    if (this._asyncIdleHandle !== null) {
+      if (typeof cancelIdleCallback === 'function') {
+        cancelIdleCallback(this._asyncIdleHandle);
+      } else {
+        clearTimeout(this._asyncIdleHandle);
+      }
+      this._asyncIdleHandle = null;
+    }
+    this._asyncQueue = [];
+  }
+
+  private _scheduleAsyncChunk(): void {
+    if (this._asyncQueue.length === 0) {
+      this._asyncIdleHandle = null;
+      r3fLog('inspect', `Async materialization complete: ${this._nodes.size} nodes materialized`);
+      return;
+    }
+
+    const callback = (deadline?: IdleDeadline) => {
+      const hasTimeRemaining = deadline
+        ? () => deadline.timeRemaining() > 2
+        : () => true;
+
+      let processed = 0;
+      while (
+        this._asyncQueue.length > 0 &&
+        processed < this._asyncBatchSize &&
+        hasTimeRemaining()
+      ) {
+        const uuid = this._asyncQueue.shift()!;
+        if (!this._nodes.has(uuid)) {
+          this.materialize(uuid);
+        }
+        processed++;
+      }
+
+      this._scheduleAsyncChunk();
+    };
+
+    if (typeof requestIdleCallback === 'function') {
+      this._asyncIdleHandle = requestIdleCallback(callback, { timeout: 100 }) as unknown as number;
+    } else {
+      this._asyncIdleHandle = setTimeout(callback, 16) as unknown as number;
     }
   }
 

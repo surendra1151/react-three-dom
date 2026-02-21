@@ -10,3 +10,98 @@ chrome.devtools.panels.create(
     // Panel created; panel.html loads the React inspector UI
   }
 );
+
+// ---------------------------------------------------------------------------
+// Auto-enable inspect mode when DevTools opens so the canvas crosshair and
+// raycasting are always active. This makes Chrome's inspect pointer (Ctrl+Shift+C)
+// work — hovering the canvas shows 3D highlights, clicking selects objects.
+// ---------------------------------------------------------------------------
+
+(function autoEnableInspect() {
+  function tryEnable() {
+    chrome.devtools.inspectedWindow.eval(
+      "(function() {" +
+      "  if (window.__R3F_DOM__ && window.__R3F_DOM__._ready && window.__R3F_DOM__.setInspectMode) {" +
+      "    window.__R3F_DOM__.setInspectMode(true);" +
+      "    return true;" +
+      "  }" +
+      "  return false;" +
+      "})()",
+      function (enabled) {
+        if (!enabled) {
+          setTimeout(tryEnable, 500);
+        }
+      }
+    );
+  }
+  tryEnable();
+})();
+
+// ---------------------------------------------------------------------------
+// Direction 1: Elements tab → Scene (hover highlight)
+//
+// onSelectionChanged fires when you click or arrow-key to a new element.
+// We read $0 (the selected element) and set __r3fdom_hovered__ on the page.
+// The Highlighter polls __r3fdom_hovered__ and shows the 3D hover highlight.
+// ---------------------------------------------------------------------------
+
+var _lastSyncedUuid = null;
+
+function syncHoveredElement() {
+  // $0 is available inside inspectedWindow.eval as a DevTools console API.
+  // We run everything in a single eval to avoid serialization issues with
+  // DOM element references.
+  chrome.devtools.inspectedWindow.eval(
+    "(function() {" +
+    "  try {" +
+    "    var el = $0;" +
+    "    if (!el) { window.__r3fdom_hovered__ = null; return null; }" +
+    "    var uuid = el.getAttribute ? el.getAttribute('data-uuid') : null;" +
+    "    if (!uuid && el.closest) {" +
+    "      var closest = el.closest('[data-uuid]');" +
+    "      if (closest) { uuid = closest.getAttribute('data-uuid'); el = closest; }" +
+    "    }" +
+    "    if (uuid) {" +
+    "      window.__r3fdom_hovered__ = el;" +
+    "      return uuid;" +
+    "    }" +
+    "    window.__r3fdom_hovered__ = null;" +
+    "    return null;" +
+    "  } catch(e) { return null; }" +
+    "})()",
+    function (uuid) {
+      if (uuid !== _lastSyncedUuid) {
+        _lastSyncedUuid = uuid;
+      }
+    }
+  );
+}
+
+// Fire immediately on selection change in Elements tab
+if (chrome.devtools.panels.elements && chrome.devtools.panels.elements.onSelectionChanged) {
+  chrome.devtools.panels.elements.onSelectionChanged.addListener(function () {
+    syncHoveredElement();
+  });
+}
+
+// Poll as backup — $0 updates on selection, this catches it
+setInterval(syncHoveredElement, 200);
+
+// ---------------------------------------------------------------------------
+// Direction 2: Scene → Elements tab
+//
+// When the user clicks an object on the canvas (via InspectController),
+// the page sets window.__r3fdom_selected_element__ to the mirror DOM node.
+// We poll for it and call inspect() to reveal it in the Elements tab.
+// ---------------------------------------------------------------------------
+
+setInterval(function () {
+  chrome.devtools.inspectedWindow.eval(
+    "(function() {" +
+    "  var el = window.__r3fdom_selected_element__;" +
+    "  if (el) { window.__r3fdom_selected_element__ = null; inspect(el); return true; }" +
+    "  return false;" +
+    "})()",
+    function () {}
+  );
+}, 200);

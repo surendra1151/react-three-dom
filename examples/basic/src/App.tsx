@@ -235,7 +235,7 @@ export function App() {
         shadows
       >
         {/* The bridge — renders nothing, just wires up the DOM mirror */}
-        <ThreeDom />
+        <ThreeDom debug inspect={false} />
 
         {/* Scene */}
         <Lighting />

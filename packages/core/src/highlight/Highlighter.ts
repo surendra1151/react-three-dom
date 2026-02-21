@@ -1,276 +1,301 @@
 import {
   Object3D,
-  Box3,
+  Scene,
   Vector3,
-  Camera,
-  WebGLRenderer,
+  Mesh,
+  Line,
+  Points,
+  MeshBasicMaterial,
+  LineBasicMaterial,
+  EdgesGeometry,
+  LineSegments,
+  DoubleSide,
+  BufferGeometry,
+  Box3,
+  BoxGeometry,
 } from 'three';
+import type { Camera, WebGLRenderer } from 'three';
 import type { SelectionManager } from './SelectionManager';
 
 // ---------------------------------------------------------------------------
-// Highlighter
+// Highlighter — Chrome DevTools-style 3D object highlighting
 //
-// Renders DevTools-style 2D overlay highlights over 3D objects by projecting
-// their world-space bounding boxes onto screen coordinates. Matches the
-// Chrome DevTools visual style:
-//   - Blue semi-transparent overlay for content area
-//   - Tooltip showing element tag name + dimensions
-//   - Hover highlight (temporary) vs selected highlight (persistent)
-//   - Parent selection cascades to all children
+// Renders a translucent fill overlay matching Chrome's rgb(111,168,220) 66%.
+// No edge outlines — clean filled highlight only.
 // ---------------------------------------------------------------------------
 
-/** Chrome DevTools highlight colors */
-const COLORS = {
-  /** Content area — same blue as Chrome DevTools element highlight */
-  content: 'rgba(111, 168, 220, 0.66)',
-  /** Slightly dimmer for children of a selected parent */
-  contentChild: 'rgba(111, 168, 220, 0.33)',
-  /** Hover highlight — lighter blue */
-  hover: 'rgba(111, 168, 220, 0.4)',
-  /** Tooltip background */
-  tooltipBg: 'rgba(36, 36, 36, 0.9)',
-  /** Tooltip text */
-  tooltipText: '#fff',
-  /** Tooltip tag color */
-  tooltipTag: '#e776e0',
-  /** Tooltip dimensions color */
-  tooltipDim: '#c5c5c5',
-  /** Border for selected elements */
-  border: 'rgba(111, 168, 220, 0.9)',
-} as const;
+// Chrome DevTools highlight: rgb(111, 168, 220) ~66% opacity
+const HOVER_FILL_COLOR = 0x6fa8dc;
+const HOVER_FILL_OPACITY = 0.66;
 
-export interface HighlighterOptions {
-  /** Whether to show a tooltip above highlighted objects. Default: true */
-  showTooltip?: boolean;
+const SELECTION_FILL_COLOR = 0x6fa8dc;
+const SELECTION_FILL_OPACITY = 0.75;
+const SELECTION_BBOX_COLOR = 0x6fa8dc;
+const SELECTION_BBOX_OPACITY = 0.3;
+
+const _box3 = /* @__PURE__ */ new Box3();
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function hasRenderableGeometry(obj: Object3D): boolean {
+  return (
+    (obj as Mesh).isMesh === true ||
+    (obj as Line).isLine === true ||
+    (obj as Points).isPoints === true
+  );
 }
 
-/** A 2D rectangle in screen pixels */
-interface ScreenRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
+function collectHighlightTargets(obj: Object3D): Object3D[] {
+  if (hasRenderableGeometry(obj)) return [obj];
+
+  const targets: Object3D[] = [];
+  obj.traverse((child) => {
+    if (child === obj) return;
+    if (child.userData?.__r3fdom_internal) return;
+    if (hasRenderableGeometry(child)) targets.push(child);
+  });
+  return targets;
 }
 
-// ---------------------------------------------------------------------------
-// Helper: project 3D bounding box to 2D screen rect
-// ---------------------------------------------------------------------------
+function markInternal(obj: Object3D): void {
+  obj.userData.__r3fdom_internal = true;
+  obj.raycast = () => {};
+  obj.traverse((child) => {
+    child.userData.__r3fdom_internal = true;
+    child.raycast = () => {};
+  });
+}
 
-const _box = /* @__PURE__ */ new Box3();
-const _v = /* @__PURE__ */ new Vector3();
-const _corners: Vector3[] = Array.from({ length: 8 }, () => new Vector3());
+/**
+ * Sync highlight group to match the source object's world transform.
+ * Called from useFrame as a best-effort early sync.
+ */
+function _syncGroupTransform(source: Object3D, highlightRoot: Object3D): void {
+  source.updateWorldMatrix(true, false);
+  source.matrixWorld.decompose(
+    highlightRoot.position,
+    highlightRoot.quaternion,
+    highlightRoot.scale,
+  );
+}
 
-function projectBoundsToScreen(
-  obj: Object3D,
-  camera: Camera,
-  canvas: HTMLCanvasElement,
-): ScreenRect | null {
-  _box.setFromObject(obj);
-  if (_box.isEmpty()) return null;
+/**
+ * Override updateMatrixWorld on the highlight group so that whenever
+ * Three.js traverses the scene graph (during renderer.render()),
+ * the highlight group's matrixWorld is copied directly from the source.
+ *
+ * This runs during scene.updateMatrixWorld() — which happens AFTER all
+ * useFrame callbacks — so the source's position/quaternion/scale are
+ * guaranteed to reflect the current frame's animations.
+ */
+function _attachRenderSync(source: Object3D, highlightRoot: Object3D): void {
+  highlightRoot.matrixAutoUpdate = false;
 
-  const { min, max } = _box;
-
-  // Get all 8 corners of the AABB
-  _corners[0].set(min.x, min.y, min.z);
-  _corners[1].set(min.x, min.y, max.z);
-  _corners[2].set(min.x, max.y, min.z);
-  _corners[3].set(min.x, max.y, max.z);
-  _corners[4].set(max.x, min.y, min.z);
-  _corners[5].set(max.x, min.y, max.z);
-  _corners[6].set(max.x, max.y, min.z);
-  _corners[7].set(max.x, max.y, max.z);
-
-  const rect = canvas.getBoundingClientRect();
-  let screenMinX = Infinity;
-  let screenMinY = Infinity;
-  let screenMaxX = -Infinity;
-  let screenMaxY = -Infinity;
-  let allBehind = true;
-
-  for (const corner of _corners) {
-    _v.copy(corner).project(camera);
-
-    // Check if point is in front of camera (z < 1 in NDC)
-    if (_v.z < 1) allBehind = false;
-
-    // Convert NDC to screen pixels
-    const sx = ((_v.x + 1) / 2) * rect.width;
-    const sy = ((1 - _v.y) / 2) * rect.height;
-
-    screenMinX = Math.min(screenMinX, sx);
-    screenMinY = Math.min(screenMinY, sy);
-    screenMaxX = Math.max(screenMaxX, sx);
-    screenMaxY = Math.max(screenMaxY, sy);
-  }
-
-  if (allBehind) return null;
-
-  // Clamp to canvas bounds
-  screenMinX = Math.max(0, screenMinX);
-  screenMinY = Math.max(0, screenMinY);
-  screenMaxX = Math.min(rect.width, screenMaxX);
-  screenMaxY = Math.min(rect.height, screenMaxY);
-
-  const width = screenMaxX - screenMinX;
-  const height = screenMaxY - screenMinY;
-
-  if (width < 1 || height < 1) return null;
-
-  return {
-    left: rect.left + screenMinX,
-    top: rect.top + screenMinY,
-    width,
-    height,
+  highlightRoot.updateMatrixWorld = (force?: boolean) => {
+    source.updateWorldMatrix(true, false);
+    highlightRoot.matrixWorld.copy(source.matrixWorld);
+    for (const child of highlightRoot.children) {
+      child.updateMatrixWorld(force);
+    }
   };
 }
 
 // ---------------------------------------------------------------------------
-// Helper: get a display label for an object (like DevTools tag name)
+// Highlight mesh factories
 // ---------------------------------------------------------------------------
 
-function getObjectLabel(obj: Object3D): string {
-  const tag = `three-${obj.type.toLowerCase()}`;
-  const parts: string[] = [tag];
+interface HighlightGroup {
+  root: Object3D;
+  disposables: { dispose(): void }[];
+}
 
-  if (obj.name) {
-    parts.push(`.${obj.name}`);
+function createHighlightMesh(
+  source: Object3D,
+  fillColor: number,
+  fillOpacity: number,
+): HighlightGroup | null {
+  const geom = (source as Mesh).geometry as BufferGeometry | undefined;
+  if (!geom) return null;
+
+  const group = new Object3D();
+  const disposables: { dispose(): void }[] = [];
+
+  const fillMat = new MeshBasicMaterial({
+    color: fillColor,
+    transparent: true,
+    opacity: fillOpacity,
+    depthTest: false,
+    depthWrite: false,
+    side: DoubleSide,
+  });
+  disposables.push(fillMat);
+
+  const fillMesh = new Mesh(geom, fillMat);
+  fillMesh.scale.setScalar(1.005);
+  fillMesh.raycast = () => {};
+  group.add(fillMesh);
+
+  source.updateWorldMatrix(true, false);
+  source.matrixWorld.decompose(group.position, group.quaternion, group.scale);
+
+  markInternal(group);
+  _attachRenderSync(source, group);
+
+  return { root: group, disposables };
+}
+
+function createBoundingBoxHighlight(obj: Object3D): HighlightGroup | null {
+  _box3.makeEmpty();
+
+  const targets = collectHighlightTargets(obj);
+  if (targets.length === 0) return null;
+
+  for (const target of targets) {
+    target.updateWorldMatrix(true, false);
+    const geom = (target as Mesh).geometry as BufferGeometry | undefined;
+    if (geom) {
+      if (!geom.boundingBox) geom.computeBoundingBox();
+      if (geom.boundingBox) {
+        const childBox = geom.boundingBox.clone();
+        childBox.applyMatrix4(target.matrixWorld);
+        _box3.union(childBox);
+      }
+    }
   }
 
-  const testId = obj.userData?.testId;
-  if (testId) {
-    parts.push(`[testId="${testId}"]`);
-  }
+  if (_box3.isEmpty()) return null;
 
-  return parts.join('');
-}
+  const size = _box3.getSize(new Vector3());
+  const center = _box3.getCenter(new Vector3());
 
-function getObjectDimensions(obj: Object3D): string {
-  _box.setFromObject(obj);
-  if (_box.isEmpty()) return '';
-  const size = _box.getSize(new Vector3());
-  return `${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)}`;
-}
+  const disposables: { dispose(): void }[] = [];
 
-// ---------------------------------------------------------------------------
-// Overlay element management
-// ---------------------------------------------------------------------------
+  const boxGeom = new BoxGeometry(size.x, size.y, size.z);
+  disposables.push(boxGeom);
 
-interface OverlayEntry {
-  /** The container div for the highlight overlay */
-  overlayEl: HTMLDivElement;
-  /** The tooltip element */
-  tooltipEl: HTMLDivElement;
-  /** Target object being highlighted */
-  target: Object3D;
-  /** Whether this is a child-of-parent highlight (dimmer) */
-  isChild: boolean;
-}
+  const fillMat = new MeshBasicMaterial({
+    color: SELECTION_BBOX_COLOR,
+    transparent: true,
+    opacity: SELECTION_BBOX_OPACITY,
+    depthTest: false,
+    depthWrite: false,
+    side: DoubleSide,
+  });
+  disposables.push(fillMat);
+  const fillMesh = new Mesh(boxGeom, fillMat);
+  fillMesh.raycast = () => {};
 
-function createOverlayElement(color: string, showBorder: boolean): HTMLDivElement {
-  const el = document.createElement('div');
-  el.style.cssText = `
-    position: fixed;
-    pointer-events: none;
-    z-index: 99998;
-    background: ${color};
-    ${showBorder ? `border: 1px solid ${COLORS.border};` : ''}
-    transition: all 0.05s ease-out;
-    box-sizing: border-box;
-  `;
-  return el;
-}
+  const edgesGeom = new EdgesGeometry(boxGeom);
+  disposables.push(edgesGeom);
+  const edgeMat = new LineBasicMaterial({
+    color: SELECTION_BBOX_COLOR,
+    transparent: true,
+    opacity: 0.5,
+    depthTest: false,
+    depthWrite: false,
+  });
+  disposables.push(edgeMat);
+  const edgeMesh = new LineSegments(edgesGeom, edgeMat);
+  edgeMesh.raycast = () => {};
 
-function createTooltipElement(): HTMLDivElement {
-  const el = document.createElement('div');
-  el.style.cssText = `
-    position: fixed;
-    pointer-events: none;
-    z-index: 99999;
-    background: ${COLORS.tooltipBg};
-    color: ${COLORS.tooltipText};
-    font-family: 'SF Mono', Monaco, monospace;
-    font-size: 11px;
-    padding: 4px 8px;
-    border-radius: 3px;
-    white-space: nowrap;
-    line-height: 1.4;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-  `;
-  return el;
-}
+  const group = new Object3D();
+  group.add(fillMesh);
+  group.add(edgeMesh);
+  group.position.copy(center);
+  group.renderOrder = 998;
 
-function positionOverlay(entry: OverlayEntry, rect: ScreenRect): void {
-  const { overlayEl, tooltipEl } = entry;
-  overlayEl.style.left = `${rect.left}px`;
-  overlayEl.style.top = `${rect.top}px`;
-  overlayEl.style.width = `${rect.width}px`;
-  overlayEl.style.height = `${rect.height}px`;
-  overlayEl.style.display = 'block';
+  markInternal(group);
 
-  // Position tooltip above the overlay
-  tooltipEl.style.left = `${rect.left}px`;
-  tooltipEl.style.top = `${Math.max(0, rect.top - 28)}px`;
-  tooltipEl.style.display = 'block';
-}
+  group.matrixAutoUpdate = false;
+  group.updateMatrixWorld = (force?: boolean) => {
+    _box3.makeEmpty();
+    for (const target of targets) {
+      target.updateWorldMatrix(true, false);
+      const g = (target as Mesh).geometry as BufferGeometry | undefined;
+      if (g) {
+        if (!g.boundingBox) g.computeBoundingBox();
+        if (g.boundingBox) {
+          const childBox = g.boundingBox.clone();
+          childBox.applyMatrix4(target.matrixWorld);
+          _box3.union(childBox);
+        }
+      }
+    }
+    if (!_box3.isEmpty()) {
+      const s = _box3.getSize(new Vector3());
+      const c = _box3.getCenter(new Vector3());
+      group.position.copy(c);
+      group.scale.set(
+        s.x / size.x || 1,
+        s.y / size.y || 1,
+        s.z / size.z || 1,
+      );
+    }
+    group.updateMatrix();
+    group.matrixWorld.copy(group.matrix);
+    for (const child of group.children) {
+      child.updateMatrixWorld(force);
+    }
+  };
 
-function hideOverlay(entry: OverlayEntry): void {
-  entry.overlayEl.style.display = 'none';
-  entry.tooltipEl.style.display = 'none';
+  return { root: group, disposables };
 }
 
 // ---------------------------------------------------------------------------
 // Highlighter class
 // ---------------------------------------------------------------------------
 
+export interface HighlighterOptions {
+  showTooltip?: boolean;
+}
+
+interface HoverEntry {
+  source: Object3D;
+  group: HighlightGroup;
+}
+
+interface SelectionEntry {
+  source: Object3D;
+  meshGroups: HighlightGroup[];
+  bboxGroup: HighlightGroup | null;
+}
+
 export class Highlighter {
-  /** Selected object overlays (persistent until deselected) */
-  private _selectedEntries: Map<Object3D, OverlayEntry> = new Map();
-  /** Hover overlay (temporary, single object at a time) */
-  private _hoverEntries: Map<Object3D, OverlayEntry> = new Map();
-
-  private _camera: Camera | null = null;
-  private _renderer: WebGLRenderer | null = null;
+  private _scene: Scene | null = null;
   private _unsubscribe: (() => void) | null = null;
-  private _showTooltip: boolean;
 
-  /** DevTools hover polling interval */
+  private _hoverEntries: HoverEntry[] = [];
+  private _hoverTarget: Object3D | null = null;
+  private _selectedEntries: Map<Object3D, SelectionEntry> = new Map();
+
   private _hoverPollId: ReturnType<typeof setInterval> | null = null;
-  private _lastHoveredElement: HTMLElement | null = null;
-
-  /** Store reference for resolving objects */
+  private _lastHoveredUuid: string | null = null;
   private _store: { getObject3D(uuid: string): Object3D | null } | null = null;
 
-  constructor(options: HighlighterOptions = {}) {
-    this._showTooltip = options.showTooltip ?? true;
-  }
+  constructor(_options: HighlighterOptions = {}) {}
 
   // -----------------------------------------------------------------------
   // Lifecycle
   // -----------------------------------------------------------------------
 
   attach(
-    _scene: Object3D,
+    scene: Scene,
     selectionManager: SelectionManager,
-    camera: Camera,
-    renderer: WebGLRenderer,
+    _camera: Camera,
+    _renderer: WebGLRenderer,
     store: { getObject3D(uuid: string): Object3D | null },
   ): void {
     this.detach();
-    // scene parameter kept for API compatibility but not used for 2D overlays
-    void _scene;
-    this._camera = camera;
-    this._renderer = renderer;
+    this._scene = scene;
     this._store = store;
 
-    // Subscribe to selection changes
     this._unsubscribe = selectionManager.subscribe((selected) => {
-      this._syncSelectedHighlights(selected);
+      this._syncSelectionHighlights(selected);
     });
 
-    // Apply initial selection
-    this._syncSelectedHighlights([...selectionManager.getSelected()]);
-
-    // Start polling for DevTools hover
+    this._syncSelectionHighlights([...selectionManager.getSelected()]);
     this._startHoverPolling();
   }
 
@@ -280,165 +305,153 @@ export class Highlighter {
       this._unsubscribe = null;
     }
     this._stopHoverPolling();
-    this._clearAllOverlays(this._selectedEntries);
-    this._clearAllOverlays(this._hoverEntries);
-    this._camera = null;
-    this._renderer = null;
+    this.clearHoverHighlight();
+    this._clearAllSelectionHighlights();
+    this._scene = null;
     this._store = null;
   }
 
   // -----------------------------------------------------------------------
-  // Per-frame update — reposition all overlays to follow camera/objects
+  // Per-frame update
   // -----------------------------------------------------------------------
 
   update(): void {
-    if (!this._camera || !this._renderer) return;
-    const canvas = this._renderer.domElement;
+    for (const entry of this._hoverEntries) {
+      _syncGroupTransform(entry.source, entry.group.root);
+    }
 
-    // Update selected overlays
-    for (const entry of this._selectedEntries.values()) {
-      const rect = projectBoundsToScreen(entry.target, this._camera, canvas);
-      if (rect) {
-        positionOverlay(entry, rect);
-      } else {
-        hideOverlay(entry);
+    for (const selEntry of this._selectedEntries.values()) {
+      for (const mg of selEntry.meshGroups) {
+        const src = mg.root.userData.__r3fdom_source as Object3D | undefined;
+        if (src) {
+          _syncGroupTransform(src, mg.root);
+        }
       }
     }
 
-    // Update hover overlays
-    for (const entry of this._hoverEntries.values()) {
-      const rect = projectBoundsToScreen(entry.target, this._camera, canvas);
-      if (rect) {
-        positionOverlay(entry, rect);
-      } else {
-        hideOverlay(entry);
+  }
+
+  // -----------------------------------------------------------------------
+  // Public API: hover highlight
+  // -----------------------------------------------------------------------
+
+  showHoverHighlight(obj: Object3D): void {
+    if (obj === this._hoverTarget) return;
+    this._clearHoverVisuals();
+    if (!this._scene) return;
+
+    this._hoverTarget = obj;
+    const targets = collectHighlightTargets(obj);
+
+    for (const target of targets) {
+      const hg = createHighlightMesh(target, HOVER_FILL_COLOR, HOVER_FILL_OPACITY);
+      if (hg) {
+        hg.root.renderOrder = 997;
+        this._scene.add(hg.root);
+        this._hoverEntries.push({ source: target, group: hg });
       }
     }
+
+  }
+
+  clearHoverHighlight(): void {
+    this._clearHoverVisuals();
+    this._lastHoveredUuid = null;
+  }
+
+  private _clearHoverVisuals(): void {
+    for (const entry of this._hoverEntries) {
+      this._disposeHighlightGroup(entry.group);
+    }
+    this._hoverEntries = [];
+    this._hoverTarget = null;
   }
 
   // -----------------------------------------------------------------------
-  // Public API
+  // Public API: queries
   // -----------------------------------------------------------------------
-
-  highlight(obj: Object3D): void {
-    this._addSelectedHighlight(obj, false);
-  }
-
-  unhighlight(obj: Object3D): void {
-    this._removeOverlay(obj, this._selectedEntries);
-  }
-
-  clearAll(): void {
-    this._clearAllOverlays(this._selectedEntries);
-    this._clearAllOverlays(this._hoverEntries);
-  }
 
   isHighlighted(obj: Object3D): boolean {
     return this._selectedEntries.has(obj);
   }
 
-  /** Show a temporary hover highlight for an object and its children */
-  showHoverHighlight(obj: Object3D): void {
-    this._clearAllOverlays(this._hoverEntries);
-    this._addHoverHighlightRecursive(obj);
-  }
-
-  /** Clear the hover highlight */
-  clearHoverHighlight(): void {
-    this._clearAllOverlays(this._hoverEntries);
-    this._lastHoveredElement = null;
+  clearAll(): void {
+    this.clearHoverHighlight();
+    this._clearAllSelectionHighlights();
   }
 
   // -----------------------------------------------------------------------
   // Internal: selection highlights
   // -----------------------------------------------------------------------
 
-  private _syncSelectedHighlights(selected: Object3D[]): void {
-    // Collect all objects that should be highlighted
-    const targetSet = new Set<Object3D>();
-    const primarySet = new Set<Object3D>(selected);
+  private _syncSelectionHighlights(selected: Object3D[]): void {
+    if (!this._scene) return;
+
+    const selectedSet = new Set(selected);
+
+    for (const [obj] of this._selectedEntries) {
+      if (!selectedSet.has(obj)) {
+        this._removeSelectionHighlight(obj);
+      }
+    }
 
     for (const obj of selected) {
-      targetSet.add(obj);
-      // If the selected object has children, cascade highlights
-      obj.traverse((child) => {
-        targetSet.add(child);
-      });
-    }
-
-    // Remove overlays for objects no longer in the target set
-    for (const [obj] of this._selectedEntries) {
-      if (!targetSet.has(obj)) {
-        this._removeOverlay(obj, this._selectedEntries);
-      }
-    }
-
-    // Add overlays for newly targeted objects
-    for (const obj of targetSet) {
-      if (obj.userData?.__r3fdom_internal) continue;
       if (!this._selectedEntries.has(obj)) {
-        const isChild = !primarySet.has(obj);
-        this._addSelectedHighlight(obj, isChild);
+        this._addSelectionHighlight(obj);
       }
     }
   }
 
-  private _addSelectedHighlight(obj: Object3D, isChild: boolean): void {
-    if (this._selectedEntries.has(obj)) return;
+  private _addSelectionHighlight(obj: Object3D): void {
+    if (!this._scene) return;
+    const targets = collectHighlightTargets(obj);
+    const meshGroups: HighlightGroup[] = [];
 
-    const color = isChild ? COLORS.contentChild : COLORS.content;
-    const overlayEl = createOverlayElement(color, !isChild);
-    const tooltipEl = createTooltipElement();
-
-    // Only show tooltip for the primary (non-child) selection
-    if (isChild || !this._showTooltip) {
-      tooltipEl.style.display = 'none';
-    }
-
-    // Set tooltip content
-    const label = getObjectLabel(obj);
-    const dims = getObjectDimensions(obj);
-    tooltipEl.innerHTML = `<span style="color:${COLORS.tooltipTag}">${label}</span>` +
-      (dims ? ` <span style="color:${COLORS.tooltipDim}">${dims}</span>` : '');
-
-    document.body.appendChild(overlayEl);
-    document.body.appendChild(tooltipEl);
-
-    const entry: OverlayEntry = { overlayEl, tooltipEl, target: obj, isChild };
-    this._selectedEntries.set(obj, entry);
-  }
-
-  // -----------------------------------------------------------------------
-  // Internal: hover highlights
-  // -----------------------------------------------------------------------
-
-  private _addHoverHighlightRecursive(obj: Object3D): void {
-    if (obj.userData?.__r3fdom_internal) return;
-
-    const overlayEl = createOverlayElement(COLORS.hover, false);
-    const tooltipEl = createTooltipElement();
-
-    // Tooltip only for the root hovered object
-    if (this._hoverEntries.size === 0 && this._showTooltip) {
-      const label = getObjectLabel(obj);
-      const dims = getObjectDimensions(obj);
-      tooltipEl.innerHTML = `<span style="color:${COLORS.tooltipTag}">${label}</span>` +
-        (dims ? ` <span style="color:${COLORS.tooltipDim}">${dims}</span>` : '');
-    } else {
-      tooltipEl.style.display = 'none';
-    }
-
-    document.body.appendChild(overlayEl);
-    document.body.appendChild(tooltipEl);
-
-    this._hoverEntries.set(obj, { overlayEl, tooltipEl, target: obj, isChild: false });
-
-    // Recurse into children
-    for (const child of obj.children) {
-      if (!child.userData?.__r3fdom_internal) {
-        this._addHoverHighlightRecursive(child);
+    for (const target of targets) {
+      const hg = createHighlightMesh(target, SELECTION_FILL_COLOR, SELECTION_FILL_OPACITY);
+      if (hg) {
+        hg.root.userData.__r3fdom_source = target;
+        hg.root.renderOrder = 999;
+        this._scene.add(hg.root);
+        meshGroups.push(hg);
       }
     }
+
+    let bboxGroup: HighlightGroup | null = null;
+    if (targets.length > 1) {
+      bboxGroup = createBoundingBoxHighlight(obj);
+      if (bboxGroup) {
+        this._scene.add(bboxGroup.root);
+      }
+    }
+
+    if (meshGroups.length > 0 || bboxGroup) {
+      this._selectedEntries.set(obj, { source: obj, meshGroups, bboxGroup });
+    }
+  }
+
+  private _removeSelectionHighlight(obj: Object3D): void {
+    const entry = this._selectedEntries.get(obj);
+    if (!entry) return;
+    for (const mg of entry.meshGroups) {
+      this._disposeHighlightGroup(mg);
+    }
+    if (entry.bboxGroup) {
+      this._disposeHighlightGroup(entry.bboxGroup);
+    }
+    this._selectedEntries.delete(obj);
+  }
+
+  private _clearAllSelectionHighlights(): void {
+    for (const entry of this._selectedEntries.values()) {
+      for (const mg of entry.meshGroups) {
+        this._disposeHighlightGroup(mg);
+      }
+      if (entry.bboxGroup) {
+        this._disposeHighlightGroup(entry.bboxGroup);
+      }
+    }
+    this._selectedEntries.clear();
   }
 
   // -----------------------------------------------------------------------
@@ -462,22 +475,15 @@ export class Highlighter {
     if (!this._store) return;
 
     try {
-      // Chrome DevTools exposes $0 for the currently selected element.
-      // We also check for a custom __r3fdom_hovered__ property that
-      // we set via a MutationObserver on the mirror root.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const hoveredEl = (globalThis as any).__r3fdom_hovered__ as HTMLElement | undefined;
-      if (hoveredEl === this._lastHoveredElement) return;
-      this._lastHoveredElement = hoveredEl ?? null;
+      const uuid = hoveredEl?.getAttribute?.('data-uuid') ?? null;
 
-      if (!hoveredEl) {
-        this._clearAllOverlays(this._hoverEntries);
-        return;
-      }
+      if (uuid === this._lastHoveredUuid) return;
+      this._lastHoveredUuid = uuid;
 
-      const uuid = hoveredEl.getAttribute?.('data-uuid');
       if (!uuid) {
-        this._clearAllOverlays(this._hoverEntries);
+        this._clearHoverVisuals();
         return;
       }
 
@@ -485,36 +491,23 @@ export class Highlighter {
       if (obj) {
         this.showHoverHighlight(obj);
       } else {
-        this._clearAllOverlays(this._hoverEntries);
+        this._clearHoverVisuals();
       }
     } catch {
-      // Ignore errors from DevTools API
+      // Ignore errors
     }
   }
 
   // -----------------------------------------------------------------------
-  // Internal: overlay cleanup
+  // Internal: cleanup
   // -----------------------------------------------------------------------
 
-  private _removeOverlay(obj: Object3D, map: Map<Object3D, OverlayEntry>): void {
-    const entry = map.get(obj);
-    if (!entry) return;
-    entry.overlayEl.remove();
-    entry.tooltipEl.remove();
-    map.delete(obj);
-  }
-
-  private _clearAllOverlays(map: Map<Object3D, OverlayEntry>): void {
-    for (const entry of map.values()) {
-      entry.overlayEl.remove();
-      entry.tooltipEl.remove();
+  private _disposeHighlightGroup(hg: HighlightGroup): void {
+    hg.root.removeFromParent();
+    for (const d of hg.disposables) {
+      d.dispose();
     }
-    map.clear();
   }
-
-  // -----------------------------------------------------------------------
-  // Cleanup
-  // -----------------------------------------------------------------------
 
   dispose(): void {
     this.detach();

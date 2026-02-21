@@ -122,13 +122,16 @@ export class R3FFixture {
     }, idOrUuid);
   }
 
-  /** Get heavy inspection data (Tier 2) by testId or uuid. */
-  async inspect(idOrUuid: string): Promise<ObjectInspection | null> {
-    return this._page.evaluate((id) => {
-      const api = window.__R3F_DOM__;
-      if (!api) return null;
-      return api.inspect(id);
-    }, idOrUuid);
+  /** Get heavy inspection data (Tier 2) by testId or uuid. Pass { includeGeometryData: true } to include vertex positions and triangle indices. */
+  async inspect(idOrUuid: string, options?: { includeGeometryData?: boolean }): Promise<ObjectInspection | null> {
+    return this._page.evaluate(
+      ({ id, opts }: { id: string; opts?: { includeGeometryData?: boolean } }) => {
+        const api = window.__R3F_DOM__;
+        if (!api) return null;
+        return api.inspect(id, opts);
+      },
+      { id: idOrUuid, opts: options },
+    );
   }
 
   /**

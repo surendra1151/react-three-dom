@@ -5,9 +5,12 @@ import {
   getSelection,
   select,
   inspect,
+  setInspectMode,
   flattenSnapshotTree,
   type ObjectMetadata,
   type ObjectInspection,
+  type GeometryInspection,
+  type MaterialInspection,
 } from './pageBridge';
 import { DevToolsTree, buildTree } from './DevToolsTree';
 import { panelStyles, COLORS } from './styles';
@@ -35,6 +38,55 @@ function filterList(list: ObjectMetadata[], query: string): ObjectMetadata[] {
 // Property detail pane
 // ---------------------------------------------------------------------------
 
+const SIDE_NAMES: Record<number, string> = { 0: 'Front', 1: 'Back', 2: 'Double' };
+
+function GeometrySection({ geo, meta }: { geo: GeometryInspection; meta: ObjectMetadata }) {
+  const attrEntries = Object.entries(geo.attributes ?? {});
+  return (
+    <>
+      <div style={panelStyles.propSection}>Geometry</div>
+      <PropRow label="Type" value={geo.type || meta.geometryType || ''} />
+      {meta.vertexCount != null && <PropRow label="Vertices" value={fmtNum(meta.vertexCount)} />}
+      {meta.triangleCount != null && <PropRow label="Triangles" value={fmtNum(meta.triangleCount)} />}
+      {geo.index && <PropRow label="Indices" value={fmtNum(geo.index.count)} />}
+      {attrEntries.length > 0 && (
+        <>
+          <PropRow label="Attributes" value={String(attrEntries.length)} />
+          {attrEntries.map(([name, attr]) => (
+            <PropRow key={name} label={`  ${name}`} value={`${attr.count} × ${attr.itemSize}`} />
+          ))}
+        </>
+      )}
+      {geo.boundingSphere && (
+        <PropRow label="B-Sphere r" value={geo.boundingSphere.radius.toFixed(3)} />
+      )}
+    </>
+  );
+}
+
+function MaterialSection({ mat }: { mat: MaterialInspection }) {
+  const uniformEntries = Object.entries(mat.uniforms ?? {});
+  return (
+    <>
+      <div style={panelStyles.propSection}>Material</div>
+      <PropRow label="Type" value={mat.type} />
+      {mat.color && <ColorRow label="Color" color={mat.color} />}
+      {mat.opacity != null && <PropRow label="Opacity" value={String(mat.opacity)} />}
+      {mat.transparent != null && <PropRow label="Transparent" value={String(mat.transparent)} />}
+      {mat.side != null && <PropRow label="Side" value={SIDE_NAMES[mat.side] ?? String(mat.side)} />}
+      {mat.map && <PropRow label="Map" value={mat.map} />}
+      {uniformEntries.length > 0 && (
+        <>
+          <PropRow label="Uniforms" value={String(uniformEntries.length)} />
+          {uniformEntries.map(([name, val]) => (
+            <PropRow key={name} label={`  ${name}`} value={fmtUniform(val)} />
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+
 function PropertyDetail({ data }: { data: ObjectInspection | null }) {
   if (!data) {
     return (
@@ -61,21 +113,9 @@ function PropertyDetail({ data }: { data: ObjectInspection | null }) {
       <PropRow label="Rotation" value={fmtVec(m.rotation)} />
       <PropRow label="Scale" value={fmtVec(m.scale)} />
 
-      {data.geometry && (
-        <>
-          <div style={panelStyles.propSection}>Geometry</div>
-          <PropRow label="Type" value={m.geometryType ?? ''} />
-          {m.vertexCount != null && <PropRow label="Vertices" value={String(m.vertexCount)} />}
-          {m.triangleCount != null && <PropRow label="Triangles" value={String(m.triangleCount)} />}
-        </>
-      )}
+      {data.geometry && <GeometrySection geo={data.geometry} meta={m} />}
 
-      {data.material && (
-        <>
-          <div style={panelStyles.propSection}>Material</div>
-          <PropRow label="Type" value={m.materialType ?? ''} />
-        </>
-      )}
+      {data.material && <MaterialSection mat={data.material} />}
 
       {data.bounds && Array.isArray(data.bounds.min) && Array.isArray(data.bounds.max) && (
         <>
@@ -98,7 +138,18 @@ function PropRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** Safe format for position/rotation/scale; handles missing or invalid (e.g. Infinity → null after JSON). */
+function ColorRow({ label, color }: { label: string; color: string }) {
+  return (
+    <div style={panelStyles.propRow}>
+      <span style={panelStyles.propLabel}>{label}</span>
+      <span style={panelStyles.propValueWithSwatch}>
+        <span style={{ ...panelStyles.colorSwatch, background: color }} />
+        {color}
+      </span>
+    </div>
+  );
+}
+
 function fmtVec(v: unknown): string {
   if (!Array.isArray(v) || v.length < 3) return '—';
   const a = v as unknown[];
@@ -107,6 +158,18 @@ function fmtVec(v: unknown): string {
     return `${n0.toFixed(3)}, ${n1.toFixed(3)}, ${n2.toFixed(3)}`;
   }
   return '—';
+}
+
+function fmtNum(n: number): string {
+  return n.toLocaleString();
+}
+
+function fmtUniform(val: unknown): string {
+  if (val === null || val === undefined) return 'null';
+  if (typeof val === 'number') return val.toFixed(4);
+  if (typeof val === 'boolean' || typeof val === 'string') return String(val);
+  if (Array.isArray(val)) return `[${val.map((v) => typeof v === 'number' ? v.toFixed(2) : String(v)).join(', ')}]`;
+  return String(val);
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +183,7 @@ export function PanelApp() {
   const [inspection, setInspection] = useState<ObjectInspection | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(true);
+  const [inspectModeOn, setInspectModeOn] = useState(false);
 
   // Check bridge and poll snapshot
   useEffect(() => {
@@ -153,13 +217,15 @@ export function PanelApp() {
     return () => clearInterval(id);
   }, [ready]);
 
-  // Inspect selected object
+  // Inspect selected object (only show result when it matches current selection — avoids stale/wrong details)
   useEffect(() => {
     if (!ready || !selectedUuid) { setInspection(null); return; }
+    const currentUuid = selectedUuid;
+    setInspection(null); // clear until correct result loads
     let cancelled = false;
     const load = async () => {
-      const result = await inspect(selectedUuid);
-      if (!cancelled) setInspection(result);
+      const result = await inspect(currentUuid);
+      if (!cancelled && result?.metadata?.uuid === currentUuid) setInspection(result);
     };
     load();
     const id = setInterval(load, 300);
@@ -172,7 +238,14 @@ export function PanelApp() {
   const handleSelect = useCallback(async (uuid: string) => {
     await select(uuid);
     setSelectedUuid(uuid);
+    setDetailsOpen(true); // Re-open details when user clicks an object in the tree
   }, []);
+
+  const handleToggleInspectMode = useCallback(async () => {
+    const next = !inspectModeOn;
+    await setInspectMode(next);
+    setInspectModeOn(next);
+  }, [inspectModeOn]);
 
   // -------------------------------------------------------------------------
   // Not ready states
@@ -206,7 +279,7 @@ export function PanelApp() {
 
   return (
     <div style={panelStyles.container}>
-      {/* Search bar */}
+      {/* Search bar + Select on canvas */}
       <div style={panelStyles.searchBar}>
         <input
           type="text"
@@ -220,6 +293,23 @@ export function PanelApp() {
             {filteredList.length} / {objectList.length}
           </span>
         )}
+        <button
+          type="button"
+          title="Pick a 3D element: hover to preview in Elements tab, click to select"
+          style={{
+            ...panelStyles.searchInput,
+            flex: 'none',
+            cursor: 'pointer',
+            padding: '4px 10px',
+            fontWeight: inspectModeOn ? 600 : 400,
+            background: inspectModeOn ? COLORS.accent : COLORS.bg,
+            color: inspectModeOn ? '#fff' : COLORS.text,
+            borderColor: inspectModeOn ? COLORS.accent : COLORS.border,
+          }}
+          onClick={handleToggleInspectMode}
+        >
+          {inspectModeOn ? '\u25CE Pick Element (on)' : '\u25CE Pick Element'}
+        </button>
       </div>
 
       {/* Body: tree + details pane */}

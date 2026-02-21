@@ -45,6 +45,12 @@ export interface ObjectMetadata {
 // Read directly from the live Three.js object when requested
 // ---------------------------------------------------------------------------
 
+/** Options for inspect(). Include geometry buffers only when needed to avoid perf impact. */
+export interface InspectOptions {
+  /** If true, include vertex positions and triangle indices in geometry. Default: false. */
+  includeGeometryData?: boolean;
+}
+
 export interface GeometryInspection {
   /** Geometry class type */
   type: string;
@@ -54,6 +60,10 @@ export interface GeometryInspection {
   index?: { count: number };
   /** Bounding sphere computed from geometry */
   boundingSphere?: { center: [number, number, number]; radius: number };
+  /** Position attribute data (x,y,z per vertex). Only set when inspect(..., { includeGeometryData: true }). */
+  positionData?: number[];
+  /** Index buffer (triangle indices). Only set when inspect(..., { includeGeometryData: true }) and geometry is indexed. */
+  indexData?: number[];
 }
 
 export interface MaterialInspection {
@@ -184,8 +194,8 @@ export interface R3FDOM {
   /** Full structured JSON snapshot from Tier 1 store */
   snapshot(): SceneSnapshot;
 
-  /** Tier 2: on-demand heavy inspection (reads live Three.js object) */
-  inspect(idOrUuid: string): ObjectInspection | null;
+  /** Tier 2: on-demand heavy inspection (reads live Three.js object). Use includeGeometryData: true to get vertex/index buffers. */
+  inspect(idOrUuid: string, options?: InspectOptions): ObjectInspection | null;
 
   /** Deterministic click on a 3D object */
   click(idOrUuid: string): void;
@@ -217,6 +227,29 @@ export interface R3FDOM {
 
   /** Raw Three.js object access (for advanced debugging) */
   getObject3D(idOrUuid: string): Object3D | null;
+
+  /**
+   * Resolve uuid for display: if the object is the first mesh of a Group (e.g. table top),
+   * returns the parent group uuid so the whole group is highlighted; otherwise returns the given uuid.
+   */
+  getSelectionDisplayTarget(uuid: string): string;
+
+  /**
+   * Enable or disable "inspect mode" for the mirror DOM.
+   * When true, mirror elements use pointer-events: auto so the DevTools element picker
+   * can select 3D objects by clicking on the canvas (e.g. hold Alt while using the picker).
+   * When false, pointer-events: none so normal 3D interaction works.
+   */
+  setInspectMode(on: boolean): void;
+
+  /**
+   * Manually sweep orphaned objects from the store.
+   * Removes objects that are no longer in any tracked scene graph.
+   * Runs automatically every ~30s, but can be called after large
+   * scene changes (e.g. floor unload) for immediate cleanup.
+   * Returns the number of orphans removed.
+   */
+  sweepOrphans(): number;
 
   /** Library version */
   version: string;

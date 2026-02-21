@@ -40,6 +40,7 @@ export type {
 export type {
   ObjectMetadata,
   ObjectInspection,
+  InspectOptions,
   SceneSnapshot,
   SnapshotNode,
 } from './types';

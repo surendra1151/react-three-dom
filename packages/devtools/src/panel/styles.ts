@@ -166,6 +166,25 @@ export const panelStyles: Record<string, CSSProperties> = {
     whiteSpace: 'nowrap',
     textAlign: 'right',
   },
+  colorSwatch: {
+    display: 'inline-block',
+    width: 12,
+    height: 12,
+    borderRadius: 2,
+    border: `1px solid ${COLORS.border}`,
+    verticalAlign: 'middle',
+    marginRight: 6,
+    flexShrink: 0,
+  },
+  propValueWithSwatch: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    color: COLORS.text,
+    maxWidth: 160,
+    textAlign: 'right',
+  },
 
   // Empty / message states
   message: {

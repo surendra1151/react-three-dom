@@ -84,7 +84,7 @@ export interface R3FDOM {
   getCountByType(type: string): number;
   getObjects(ids: string[]): Record<string, ObjectMetadata | null>;
   snapshot(): SceneSnapshot;
-  inspect(idOrUuid: string): ObjectInspection | null;
+  inspect(idOrUuid: string, options?: { includeGeometryData?: boolean }): ObjectInspection | null;
   click(idOrUuid: string): void;
   doubleClick(idOrUuid: string): void;
   contextMenu(idOrUuid: string): void;

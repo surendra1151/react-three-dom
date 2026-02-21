@@ -24,6 +24,11 @@ export interface ObjectMetadata {
   boundsDirty: boolean;
 }
 
+/** Options for inspect(). Set includeGeometryData: true to get vertex/index buffers (higher cost). */
+export interface InspectOptions {
+  includeGeometryData?: boolean;
+}
+
 export interface ObjectInspection {
   metadata: ObjectMetadata;
   worldMatrix: number[];
@@ -33,6 +38,10 @@ export interface ObjectInspection {
     attributes: Record<string, { itemSize: number; count: number }>;
     index?: { count: number };
     boundingSphere?: { center: [number, number, number]; radius: number };
+    /** Vertex positions (x,y,z per vertex). Only when inspect(..., { includeGeometryData: true }). */
+    positionData?: number[];
+    /** Triangle indices. Only when inspect(..., { includeGeometryData: true }) and geometry is indexed. */
+    indexData?: number[];
   };
   material?: {
     type: string;

@@ -22,6 +22,7 @@ export type {
   ObjectInspection,
   GeometryInspection,
   MaterialInspection,
+  InspectOptions,
   SceneSnapshot,
   SnapshotNode,
   StoreEvent,
@@ -60,6 +61,7 @@ export {
   getMirror,
   getSelectionManager,
   getHighlighter,
+  getInspectController,
   type ThreeDomProps,
 } from './bridge/ThreeDom';
 export { patchObject3D, restoreObject3D, isPatched } from './bridge/patchObject3D';
@@ -158,6 +160,8 @@ export {
   Highlighter,
   type HighlighterOptions,
 } from './highlight/Highlighter';
+export { InspectController } from './highlight/InspectController';
+export { RaycastAccelerator } from './highlight/RaycastAccelerator';
 export {
   SelectionManager,
   type SelectionListener,

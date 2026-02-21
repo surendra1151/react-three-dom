@@ -108,7 +108,7 @@ Objects are selected by **testId** (`userData.testId`), **uuid**, **name**, **ty
 | `getCount()`, `getCountByType(type)` | `number` | Object counts |
 | `getObjects(ids[])` | `Record<string, ObjectMetadata \| null>` | Batch lookup |
 | `snapshot()` | `SceneSnapshot` | Full scene tree |
-| `inspect(id)` | `ObjectInspection \| null` | Heavy inspection (bounds, material, etc.) |
+| `inspect(id, options?)` | `ObjectInspection \| null` | Heavy inspection (bounds, material, etc.). `{ includeGeometryData: true }` for vertex/index buffers. |
 | `getWorldPosition(id)` | `[x,y,z] \| null` | World-space position |
 | `diffSnapshots(before, after)` | `SceneDiff` | Added/removed/changed nodes |
 | `trackObjectCount(async fn)` | `{ added, removed }` | Run action, get count delta |
@@ -146,6 +146,8 @@ All support `.not` and `{ timeout }`.
 ## DevTools
 
 Install the [Chrome extension](https://chrome.google.com/webstore/detail/knmbpbojmdgjgjijbepkmgpdklndlfkn) to inspect the R3F scene in a DevTools tab (tree, search, selection). Optional; the bridge works without it.
+
+To select 3D objects with the **Elements** panel’s “Select an element” picker, open the **R3F** DevTools tab, turn **"Select on canvas"** on, then switch to the Elements tab and use the picker—the mirror DOM becomes hit-testable so the picker selects `three-mesh` / `three-group` nodes. Turn it off when done. (Holding Command (⌘) on the page also works when the page has focus.)
 
 ---
 

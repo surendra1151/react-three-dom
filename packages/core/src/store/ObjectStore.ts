@@ -12,6 +12,7 @@ import type {
   ObjectInspection,
   GeometryInspection,
   MaterialInspection,
+  InspectOptions,
   StoreEvent,
   StoreListener,
 } from '../types';
@@ -19,6 +20,13 @@ import { r3fLog } from '../debug';
 
 // ---------------------------------------------------------------------------
 // Helper: extract Tier 1 metadata from a live Three.js object
+//
+// Split into two paths for performance at BIM scale:
+//   - extractMetadata(): full extraction, called once on register
+//   - updateDynamicFields(): only reads fields that change per-frame
+//     (position, rotation, scale, visible, children count, parent),
+//     skipping geometry/material/instanceCount which are static.
+//     Reuses the existing metadata object to avoid allocation.
 // ---------------------------------------------------------------------------
 
 function extractMetadata(obj: Object3D): ObjectMetadata {
@@ -36,7 +44,11 @@ function extractMetadata(obj: Object3D): ObjectMetadata {
     boundsDirty: true,
   };
 
-  // Geometry info (Mesh, SkinnedMesh, InstancedMesh, Points, Line, etc.)
+  extractStaticFields(obj, meta);
+  return meta;
+}
+
+function extractStaticFields(obj: Object3D, meta: ObjectMetadata): void {
   try {
     if ('geometry' in obj) {
       const geom = (obj as Mesh).geometry;
@@ -54,11 +66,9 @@ function extractMetadata(obj: Object3D): ObjectMetadata {
       }
     }
   } catch {
-    // Skip geometry fields if access fails (corrupted or disposed geometry)
     r3fLog('store', `extractMetadata: geometry access failed for "${obj.name || obj.uuid}"`);
   }
 
-  // Material info
   try {
     if ('material' in obj) {
       const mat = (obj as Mesh).material;
@@ -69,11 +79,9 @@ function extractMetadata(obj: Object3D): ObjectMetadata {
       }
     }
   } catch {
-    // Skip material fields if access fails (disposed material)
     r3fLog('store', `extractMetadata: material access failed for "${obj.name || obj.uuid}"`);
   }
 
-  // InstancedMesh count
   try {
     if (obj instanceof InstancedMesh) {
       meta.instanceCount = obj.count;
@@ -81,33 +89,60 @@ function extractMetadata(obj: Object3D): ObjectMetadata {
   } catch {
     // Skip instance count if access fails
   }
-
-  return meta;
 }
 
-// ---------------------------------------------------------------------------
-// Helper: compare two metadata objects for changes (Tier 1 only)
-// Returns true if any values differ
-// ---------------------------------------------------------------------------
+/**
+ * Fast per-frame update: only reads dynamic fields that actually change
+ * between frames (transform, visibility, children, parent).
+ * Mutates `meta` in-place and returns true if anything changed.
+ * Avoids allocating a new metadata object or reading static geometry/material.
+ */
+function updateDynamicFields(obj: Object3D, meta: ObjectMetadata): boolean {
+  let changed = false;
 
-function hasChanged(prev: ObjectMetadata, curr: ObjectMetadata): boolean {
-  return (
-    prev.visible !== curr.visible ||
-    prev.name !== curr.name ||
-    prev.testId !== curr.testId ||
-    prev.position[0] !== curr.position[0] ||
-    prev.position[1] !== curr.position[1] ||
-    prev.position[2] !== curr.position[2] ||
-    prev.rotation[0] !== curr.rotation[0] ||
-    prev.rotation[1] !== curr.rotation[1] ||
-    prev.rotation[2] !== curr.rotation[2] ||
-    prev.scale[0] !== curr.scale[0] ||
-    prev.scale[1] !== curr.scale[1] ||
-    prev.scale[2] !== curr.scale[2] ||
-    prev.parentUuid !== curr.parentUuid ||
-    prev.childrenUuids.length !== curr.childrenUuids.length ||
-    prev.instanceCount !== curr.instanceCount
-  );
+  if (meta.visible !== obj.visible) { meta.visible = obj.visible; changed = true; }
+  if (meta.name !== obj.name) { meta.name = obj.name; changed = true; }
+
+  const testId = obj.userData?.testId as string | undefined;
+  if (meta.testId !== testId) { meta.testId = testId; changed = true; }
+
+  const p = obj.position;
+  if (meta.position[0] !== p.x || meta.position[1] !== p.y || meta.position[2] !== p.z) {
+    meta.position[0] = p.x; meta.position[1] = p.y; meta.position[2] = p.z;
+    changed = true;
+  }
+
+  const r = obj.rotation;
+  if (meta.rotation[0] !== r.x || meta.rotation[1] !== r.y || meta.rotation[2] !== r.z) {
+    meta.rotation[0] = r.x; meta.rotation[1] = r.y; meta.rotation[2] = r.z;
+    changed = true;
+  }
+
+  const s = obj.scale;
+  if (meta.scale[0] !== s.x || meta.scale[1] !== s.y || meta.scale[2] !== s.z) {
+    meta.scale[0] = s.x; meta.scale[1] = s.y; meta.scale[2] = s.z;
+    changed = true;
+  }
+
+  const parentUuid = obj.parent?.uuid ?? null;
+  if (meta.parentUuid !== parentUuid) { meta.parentUuid = parentUuid; changed = true; }
+
+  const children = obj.children;
+  const cached = meta.childrenUuids;
+  if (cached.length !== children.length) {
+    meta.childrenUuids = children.map((c) => c.uuid);
+    changed = true;
+  } else {
+    for (let i = 0; i < cached.length; i++) {
+      if (cached[i] !== children[i].uuid) {
+        meta.childrenUuids = children.map((c) => c.uuid);
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  return changed;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +151,7 @@ function hasChanged(prev: ObjectMetadata, curr: ObjectMetadata): boolean {
 
 const _box3 = new Box3();
 
-function inspectObject(obj: Object3D, metadata: ObjectMetadata): ObjectInspection {
+function inspectObject(obj: Object3D, metadata: ObjectMetadata, options?: InspectOptions): ObjectInspection {
   // Start with a minimal valid inspection — each section fills in details
   // and is wrapped in try/catch so a failure in one area (e.g. disposed
   // geometry) doesn't prevent the rest from being returned.
@@ -168,6 +203,16 @@ function inspectObject(obj: Object3D, metadata: ObjectMetadata): ObjectInspectio
 
         if (geom.index) {
           geoInspection.index = { count: geom.index.count };
+        }
+
+        if (options?.includeGeometryData) {
+          const posAttr = geom.getAttribute('position');
+          if (posAttr?.array) {
+            geoInspection.positionData = Array.from(posAttr.array);
+          }
+          if (geom.index?.array) {
+            geoInspection.indexData = Array.from(geom.index.array);
+          }
         }
 
         geom.computeBoundingSphere();
@@ -272,11 +317,12 @@ export class ObjectStore {
   /**
    * Register a single object into the store.
    * Populates Tier 1 metadata and all indexes.
+   * Tags the object with `__r3fdom_tracked = true` for O(1) scene membership checks.
    */
   register(obj: Object3D): ObjectMetadata {
     // Skip internal highlight/label helpers created by Highlighter
     if (obj.userData?.__r3fdom_internal) {
-      return extractMetadata(obj); // Return metadata but don't store it
+      return extractMetadata(obj);
     }
 
     // Skip if already registered
@@ -288,12 +334,13 @@ export class ObjectStore {
     this._objectByUuid.set(meta.uuid, obj);
     this._flatListDirty = true;
 
-    // Index by testId
+    // O(1) tracking flag for patchObject3D.findTrackingPair
+    obj.userData.__r3fdom_tracked = true;
+
     if (meta.testId) {
       this._objectsByTestId.set(meta.testId, obj);
     }
 
-    // Index by name
     if (meta.name) {
       let nameSet = this._objectsByName.get(meta.name);
       if (!nameSet) {
@@ -311,10 +358,8 @@ export class ObjectStore {
   }
 
   /**
-   * Register an entire subtree (object + all descendants).
-   * Individual objects that fail to register are skipped (logged when debug
-   * is enabled) so that one bad object doesn't prevent the rest from being
-   * tracked.
+   * Register an entire subtree (object + all descendants) synchronously.
+   * Prefer `registerTreeAsync` for large scenes (100k+) to avoid blocking.
    */
   registerTree(root: Object3D): void {
     this._trackedRoots.add(root);
@@ -327,8 +372,87 @@ export class ObjectStore {
     });
   }
 
+  // ---- Async registration state ----
+  private _asyncRegQueue: Object3D[] = [];
+  private _asyncRegHandle: number | null = null;
+  private _asyncRegBatchSize = 1000;
+
+  /**
+   * Register an entire subtree asynchronously using requestIdleCallback.
+   * Processes ~1000 objects per idle slice to avoid blocking the main thread.
+   *
+   * IMPORTANT: install patchObject3D BEFORE calling this so that objects
+   * added to the scene during async registration are caught by the patch.
+   *
+   * Returns a cancel function. Also cancelled automatically by dispose().
+   */
+  registerTreeAsync(root: Object3D): () => void {
+    this._trackedRoots.add(root);
+
+    // Collect all objects upfront (traverse is fast — no DOM/GPU work)
+    const queue: Object3D[] = [];
+    root.traverse((obj) => queue.push(obj));
+
+    this._asyncRegQueue = queue;
+    r3fLog('store', `registerTreeAsync: ${queue.length} objects queued`);
+
+    this._scheduleRegChunk();
+
+    return () => this._cancelAsyncRegistration();
+  }
+
+  private _scheduleRegChunk(): void {
+    if (this._asyncRegQueue.length === 0) {
+      this._asyncRegHandle = null;
+      r3fLog('store', `registerTreeAsync complete: ${this.getCount()} objects registered`);
+      return;
+    }
+
+    const callback = (deadline?: IdleDeadline) => {
+      const hasTime = deadline
+        ? () => deadline.timeRemaining() > 1
+        : () => true;
+
+      let processed = 0;
+      while (
+        this._asyncRegQueue.length > 0 &&
+        processed < this._asyncRegBatchSize &&
+        hasTime()
+      ) {
+        const obj = this._asyncRegQueue.shift()!;
+        try {
+          this.register(obj);
+        } catch (err) {
+          r3fLog('store', `registerTreeAsync: failed to register "${obj.name || obj.uuid}"`, err);
+        }
+        processed++;
+      }
+
+      this._scheduleRegChunk();
+    };
+
+    if (typeof requestIdleCallback === 'function') {
+      this._asyncRegHandle = requestIdleCallback(callback, { timeout: 50 }) as unknown as number;
+    } else {
+      this._asyncRegHandle = setTimeout(callback, 4) as unknown as number;
+    }
+  }
+
+  private _cancelAsyncRegistration(): void {
+    if (this._asyncRegHandle !== null) {
+      if (typeof cancelIdleCallback === 'function') {
+        cancelIdleCallback(this._asyncRegHandle);
+      } else {
+        clearTimeout(this._asyncRegHandle);
+      }
+      this._asyncRegHandle = null;
+    }
+    this._asyncRegQueue = [];
+  }
+
   /**
    * Unregister a single object from the store.
+   * Clears the `__r3fdom_tracked` flag.
    */
   unregister(obj: Object3D): void {
     const meta = this._metaByObject.get(obj);
@@ -338,6 +462,8 @@ export class ObjectStore {
     this._objectByUuid.delete(meta.uuid);
     this._dirtyQueue.delete(obj);
     this._flatListDirty = true;
+
+    delete obj.userData.__r3fdom_tracked;
 
     if (meta.testId) {
       this._objectsByTestId.delete(meta.testId);
@@ -374,54 +500,55 @@ export class ObjectStore {
   // -------------------------------------------------------------------------
 
   /**
-   * Refresh Tier 1 metadata from the live Three.js object.
+   * Refresh dynamic Tier 1 fields from the live Three.js object.
+   * Only reads transform, visibility, children count, and parent —
+   * skips static fields (geometry, material) that don't change per-frame.
+   * Mutates metadata in-place to avoid allocation.
    * Returns true if any values changed.
-   * Returns false (no change) if extracting metadata throws so that the
-   * previous metadata is preserved.
    */
   update(obj: Object3D): boolean {
-    const prev = this._metaByObject.get(obj);
-    if (!prev) return false;
+    const meta = this._metaByObject.get(obj);
+    if (!meta) return false;
 
-    let curr: ObjectMetadata;
+    let changed: boolean;
     try {
-      curr = extractMetadata(obj);
+      const prevTestId = meta.testId;
+      const prevName = meta.name;
+
+      changed = updateDynamicFields(obj, meta);
+
+      if (changed) {
+        if (prevTestId !== meta.testId) {
+          r3fLog('store', `testId changed: "${prevTestId}" → "${meta.testId}" (${meta.type})`);
+          if (prevTestId) this._objectsByTestId.delete(prevTestId);
+          if (meta.testId) this._objectsByTestId.set(meta.testId, obj);
+        }
+        if (prevName !== meta.name) {
+          if (prevName) {
+            const nameSet = this._objectsByName.get(prevName);
+            if (nameSet) {
+              nameSet.delete(obj);
+              if (nameSet.size === 0) this._objectsByName.delete(prevName);
+            }
+          }
+          if (meta.name) {
+            let nameSet = this._objectsByName.get(meta.name);
+            if (!nameSet) {
+              nameSet = new Set();
+              this._objectsByName.set(meta.name, nameSet);
+            }
+            nameSet.add(obj);
+          }
+        }
+
+        this._emit({ type: 'update', object: obj, metadata: meta });
+      }
     } catch (err) {
-      r3fLog('store', `update: extractMetadata failed for "${obj.name || obj.uuid}"`, err);
+      r3fLog('store', `update: updateDynamicFields failed for "${obj.name || obj.uuid}"`, err);
       return false;
     }
 
-    if (hasChanged(prev, curr)) {
-      // Update indexes if testId or name changed
-      if (prev.testId !== curr.testId) {
-        r3fLog('store', `testId changed: "${prev.testId}" → "${curr.testId}" (${curr.type})`);
-        if (prev.testId) this._objectsByTestId.delete(prev.testId);
-        if (curr.testId) this._objectsByTestId.set(curr.testId, obj);
-      }
-      if (prev.name !== curr.name) {
-        if (prev.name) {
-          const nameSet = this._objectsByName.get(prev.name);
-          if (nameSet) {
-            nameSet.delete(obj);
-            if (nameSet.size === 0) this._objectsByName.delete(prev.name);
-          }
-        }
-        if (curr.name) {
-          let nameSet = this._objectsByName.get(curr.name);
-          if (!nameSet) {
-            nameSet = new Set();
-            this._objectsByName.set(curr.name, nameSet);
-          }
-          nameSet.add(obj);
-        }
-      }
-
-      this._metaByObject.set(obj, curr);
-      this._emit({ type: 'update', object: obj, metadata: curr });
-      return true;
-    }
-
-    return false;
+    return changed;
   }
 
   // -------------------------------------------------------------------------
@@ -432,15 +559,16 @@ export class ObjectStore {
    * Compute full inspection data from a live Three.js object.
    * This reads geometry buffers, material properties, world bounds, etc.
    * Cost: 0.1–2ms depending on geometry complexity.
+   * Pass { includeGeometryData: true } to include vertex positions and triangle indices (higher cost for large meshes).
    */
-  inspect(idOrUuid: string): ObjectInspection | null {
+  inspect(idOrUuid: string, options?: InspectOptions): ObjectInspection | null {
     const obj = this.getObject3D(idOrUuid);
     if (!obj) return null;
 
     const meta = this._metaByObject.get(obj);
     if (!meta) return null;
 
-    return inspectObject(obj, meta);
+    return inspectObject(obj, meta, options);
   }
 
   // -------------------------------------------------------------------------
@@ -609,13 +737,16 @@ export class ObjectStore {
   }
 
   /**
-   * Walk up from `obj` to see if any ancestor is a tracked root.
-   * Used by Object3D.add/remove patch to determine if an object
-   * belongs to a monitored scene.
+   * Check if an object belongs to a tracked scene.
+   * Fast path: checks the `__r3fdom_tracked` flag set during register (O(1)).
+   * Fallback: walks up the parent chain to find a tracked root.
+   * The fallback is needed for newly added objects that aren't registered yet.
    */
   isInTrackedScene(obj: Object3D): boolean {
-    let current: Object3D | null = obj;
+    if (obj.userData?.__r3fdom_tracked) return true;
+    let current: Object3D | null = obj.parent;
     while (current) {
+      if (current.userData?.__r3fdom_tracked) return true;
       if (this._trackedRoots.has(current)) return true;
       current = current.parent;
     }
@@ -685,11 +816,42 @@ export class ObjectStore {
   }
 
   // -------------------------------------------------------------------------
+  // GC: sweep orphaned objects
+  // -------------------------------------------------------------------------
+
+  /**
+   * Sweep objects in `_objectByUuid` that are no longer in any tracked scene.
+   * This catches objects that were removed from the scene graph without
+   * triggering the patched Object3D.remove (e.g. direct `.children` splice,
+   * or the remove hook failing silently).
+   *
+   * At BIM scale, call this periodically (e.g. every 30s or after a floor
+   * load/unload) to prevent memory leaks from retained Object3D references.
+   *
+   * Returns the number of orphans cleaned up.
+   */
+  sweepOrphans(): number {
+    let swept = 0;
+    for (const [uuid, obj] of this._objectByUuid) {
+      if (!obj.parent && !this._trackedRoots.has(obj)) {
+        this.unregister(obj);
+        swept++;
+        r3fLog('store', `sweepOrphans: removed orphan "${obj.name || uuid}"`);
+      }
+    }
+    return swept;
+  }
+
+  // -------------------------------------------------------------------------
   // Cleanup
   // -------------------------------------------------------------------------
 
   /** Remove all tracked objects and reset state. */
   dispose(): void {
+    this._cancelAsyncRegistration();
+    for (const obj of this._objectByUuid.values()) {
+      if (obj.userData) delete obj.userData.__r3fdom_tracked;
+    }
     this._objectByUuid.clear();
     this._objectsByTestId.clear();
     this._objectsByName.clear();
@@ -697,6 +859,5 @@ export class ObjectStore {
     this._flatListDirty = true;
     this._dirtyQueue.clear();
     this._listeners = [];
-    // WeakMap and WeakSet entries will be GC'd automatically
   }
 }

@@ -45,13 +45,30 @@ export type ObjectMetadata = {
   instanceCount?: number;
 };
 
+export type GeometryInspection = {
+  type: string;
+  attributes: Record<string, { itemSize: number; count: number }>;
+  index?: { count: number };
+  boundingSphere?: { center: [number, number, number]; radius: number };
+};
+
+export type MaterialInspection = {
+  type: string;
+  color?: string;
+  transparent?: boolean;
+  opacity?: number;
+  side?: number;
+  map?: string;
+  uniforms?: Record<string, unknown>;
+};
+
 export type ObjectInspection = {
   metadata: ObjectMetadata;
   worldMatrix: number[];
   bounds: { min: [number, number, number]; max: [number, number, number] };
   userData: Record<string, unknown>;
-  geometry?: unknown;
-  material?: unknown;
+  geometry?: GeometryInspection;
+  material?: MaterialInspection;
 };
 
 function evalInPage<T>(expression: string): Promise<T> {
@@ -103,6 +120,13 @@ export function inspect(uuid: string): Promise<ObjectInspection | null> {
   return evalInPage<string>(
     `JSON.stringify(typeof window.__R3F_DOM__ !== 'undefined' && window.__R3F_DOM__.inspect ? window.__R3F_DOM__.inspect(${JSON.stringify(uuid)}) : null)`
   ).then((json) => (json ? JSON.parse(json) : null));
+}
+
+/** Enable or disable "inspect mode" so the Elements panel picker can select 3D mirror nodes on the canvas. */
+export function setInspectMode(on: boolean): Promise<void> {
+  return evalInPage(
+    `(function(){ if(window.__R3F_DOM__ && window.__R3F_DOM__.setInspectMode) window.__R3F_DOM__.setInspectMode(${on}); })()`
+  ).then(() => undefined);
 }
 
 /**

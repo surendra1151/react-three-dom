@@ -78,8 +78,8 @@ export function diffSnapshots(before: SceneSnapshot, after: SceneSnapshot): Scen
     if (!beforeNode) continue;
 
     for (const field of FIELDS_TO_COMPARE) {
-      const from = (beforeNode as Record<string, unknown>)[field];
-      const to = (afterNode as Record<string, unknown>)[field];
+      const from = (beforeNode as unknown as Record<string, unknown>)[field];
+      const to = (afterNode as unknown as Record<string, unknown>)[field];
       if (!valueEqual(from, to)) {
         changed.push({ uuid, field, from, to });
       }
