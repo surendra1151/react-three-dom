@@ -1,3 +1,11 @@
+/**
+ * @module SelectionManager
+ *
+ * Lightweight selection state manager for 3D objects. Supports single and
+ * multi-selection, notifies listeners on change so Highlighter and the
+ * devtools inspector panel can react. Decoupled from rendering — purely
+ * manages which Object3D references are "selected".
+ */
 import type { Object3D } from 'three';
 
 // ---------------------------------------------------------------------------
@@ -11,6 +19,10 @@ import type { Object3D } from 'three';
 
 export type SelectionListener = (selected: Object3D[]) => void;
 
+/**
+ * Tracks the set of currently selected Object3D instances and notifies
+ * subscribers when the selection changes.
+ */
 export class SelectionManager {
   /** Currently selected objects (ordered by selection time). */
   private _selected: Object3D[] = [];

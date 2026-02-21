@@ -1,10 +1,12 @@
-// ---------------------------------------------------------------------------
-// Path generators for drawPath — pure geometry utilities
-//
-// These generate arrays of screen-space points that can be passed to
-// r3f.drawPath(). Identical to the functions in @react-three-dom/core
-// but duplicated here to avoid a runtime dependency on the core package.
-// ---------------------------------------------------------------------------
+/**
+ * @module pathGenerators
+ *
+ * Pure geometry utilities that generate arrays of screen-space points for
+ * use with `r3f.drawPath()`. Provides line, quadratic bezier, rectangle,
+ * and circle/ellipse path generators.
+ *
+ * Duplicated from `@react-three-dom/core` to avoid a runtime dependency.
+ */
 
 /** A 2D screen-space point in CSS pixels, relative to the canvas top-left. */
 export interface DrawPoint {

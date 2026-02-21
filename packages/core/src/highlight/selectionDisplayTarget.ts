@@ -1,3 +1,10 @@
+/**
+ * @module selectionDisplayTarget
+ *
+ * Heuristic for promoting a raw raycast hit (specific sub-mesh) to its
+ * logical parent group for display/selection purposes. E.g. clicking a
+ * table top mesh selects the whole table Group.
+ */
 import type { Object3D } from 'three';
 import { getTagForType } from '../mirror/CustomElements';
 

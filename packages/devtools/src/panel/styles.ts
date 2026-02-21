@@ -1,3 +1,10 @@
+/**
+ * @module styles
+ *
+ * Shared color tokens and CSS-in-JS style objects for the react-three-dom
+ * DevTools panel. Uses a light theme matching Chrome DevTools conventions.
+ */
+
 import type { CSSProperties } from 'react';
 
 // Light theme to match Chrome DevTools / browser console

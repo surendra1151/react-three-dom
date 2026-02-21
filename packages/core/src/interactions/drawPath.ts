@@ -1,3 +1,12 @@
+/**
+ * @module drawPath
+ *
+ * Simulates freeform drawing strokes on the canvas by dispatching a full
+ * pointer sequence (pointerdown → pointermove × N → pointerup) through an
+ * array of screen-space points. Includes path generators for lines, bezier
+ * curves, rectangles, and circles. Designed for canvas drawing/annotation
+ * apps built on R3F.
+ */
 import { r3fLog } from '../debug';
 import { getRenderer } from './resolve';
 

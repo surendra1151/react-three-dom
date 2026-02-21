@@ -1,3 +1,14 @@
+/**
+ * @module fixtures
+ *
+ * Playwright test fixture for react-three-dom. Provides the `R3FFixture` class
+ * that exposes queries, interactions, waiters, snapshot diffing, and diagnostic
+ * reporting against a live Three.js scene via the `window.__R3F_DOM__` bridge.
+ *
+ * Usage: import `test` (or `createR3FTest`) and destructure `{ r3f }` in your
+ * test callbacks to get a pre-configured fixture bound to the current page.
+ */
+
 import { test as base } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 import type { ObjectMetadata, ObjectInspection, SceneSnapshot, SnapshotNode } from './types';
@@ -32,6 +43,12 @@ export interface R3FFixtureOptions {
   canvasId?: string;
 }
 
+/**
+ * Main API object provided to Playwright tests for interacting with a
+ * react-three-dom scene. Wraps queries, interactions, waiters, snapshot
+ * diffing, and rich terminal diagnostics. Supports multi-canvas apps
+ * via {@link R3FFixture.forCanvas}.
+ */
 export class R3FFixture {
   private _debugListenerAttached = false;
   private readonly _reporter: R3FReporter;

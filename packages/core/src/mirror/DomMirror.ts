@@ -1,3 +1,12 @@
+/**
+ * @module DomMirror
+ *
+ * Maintains a parallel DOM tree that mirrors the Three.js scene graph using
+ * custom elements (<three-mesh>, <three-group>, etc.). This enables standard
+ * DOM tooling — CSS selectors, DevTools Elements panel, Accessibility tree —
+ * to work with 3D objects. Only a subset of objects are materialized as DOM
+ * nodes at any time (capped via LRU eviction) to stay performant at BIM scale.
+ */
 import type { Object3D } from 'three';
 import type { ObjectStore } from '../store/ObjectStore';
 import { getTagForType } from './CustomElements';

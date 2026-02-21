@@ -1,3 +1,12 @@
+/**
+ * @module Highlighter
+ *
+ * Renders Chrome DevTools-style translucent fill overlays on hovered and
+ * selected Three.js objects. Subscribes to SelectionManager for selection
+ * state and polls `window.__r3fdom_hovered__` for DevTools element-picker
+ * hover. Highlight meshes are marked `__r3fdom_internal` so they're excluded
+ * from raycasting and the ObjectStore.
+ */
 import {
   Object3D,
   Scene,
@@ -262,6 +271,11 @@ interface SelectionEntry {
   bboxGroup: HighlightGroup | null;
 }
 
+/**
+ * Manages hover and selection highlight overlays in the 3D scene.
+ * Attaches to a Scene + SelectionManager and creates/disposes translucent
+ * mesh clones that track the source object's world transform each frame.
+ */
 export class Highlighter {
   private _scene: Scene | null = null;
   private _unsubscribe: (() => void) | null = null;
@@ -280,6 +294,7 @@ export class Highlighter {
   // Lifecycle
   // -----------------------------------------------------------------------
 
+  /** Bind to a scene and selection manager, start hover polling. */
   attach(
     scene: Scene,
     selectionManager: SelectionManager,
@@ -299,6 +314,7 @@ export class Highlighter {
     this._startHoverPolling();
   }
 
+  /** Unbind from the scene, stop polling, and remove all highlights. */
   detach(): void {
     if (this._unsubscribe) {
       this._unsubscribe();
@@ -315,6 +331,7 @@ export class Highlighter {
   // Per-frame update
   // -----------------------------------------------------------------------
 
+  /** Sync highlight group transforms to their source objects. Call each frame. */
   update(): void {
     for (const entry of this._hoverEntries) {
       _syncGroupTransform(entry.source, entry.group.root);
@@ -335,6 +352,7 @@ export class Highlighter {
   // Public API: hover highlight
   // -----------------------------------------------------------------------
 
+  /** Show a hover highlight on the given object (replaces any previous hover). */
   showHoverHighlight(obj: Object3D): void {
     if (obj === this._hoverTarget) return;
     this._clearHoverVisuals();
@@ -354,6 +372,7 @@ export class Highlighter {
 
   }
 
+  /** Remove the current hover highlight. */
   clearHoverHighlight(): void {
     this._clearHoverVisuals();
     this._lastHoveredUuid = null;
@@ -371,10 +390,12 @@ export class Highlighter {
   // Public API: queries
   // -----------------------------------------------------------------------
 
+  /** Check if an object currently has a selection highlight. */
   isHighlighted(obj: Object3D): boolean {
     return this._selectedEntries.has(obj);
   }
 
+  /** Remove all hover and selection highlights. */
   clearAll(): void {
     this.clearHoverHighlight();
     this._clearAllSelectionHighlights();
@@ -510,6 +531,7 @@ export class Highlighter {
     }
   }
 
+  /** Detach and release all resources. */
   dispose(): void {
     this.detach();
   }

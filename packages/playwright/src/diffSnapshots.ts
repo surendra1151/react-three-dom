@@ -1,4 +1,12 @@
-// Pure scene-diff utility: compare two SceneSnapshots by UUID and key fields.
+/**
+ * @module diffSnapshots
+ *
+ * Pure scene-diff utility. Compares two {@link SceneSnapshot}s by UUID and
+ * returns added nodes, removed nodes, and per-field property changes
+ * (name, type, testId, visible, position, rotation, scale).
+ *
+ * Stateless and side-effect-free — safe to call from any context.
+ */
 
 import type { SceneSnapshot, SnapshotNode } from './types';
 

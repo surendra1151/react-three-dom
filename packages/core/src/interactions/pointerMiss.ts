@@ -1,3 +1,10 @@
+/**
+ * @module pointerMiss
+ *
+ * Simulates a click on empty canvas space to trigger R3F's onPointerMissed
+ * handler on all objects. Commonly used for deselection workflows in
+ * editor-type applications.
+ */
 import { dispatchPointerMiss } from './dispatch';
 import { getRenderer } from './resolve';
 import type { ScreenPoint } from './projection';

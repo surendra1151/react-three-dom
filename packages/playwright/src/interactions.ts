@@ -1,18 +1,21 @@
+/**
+ * @module interactions
+ *
+ * Playwright interaction helpers — thin wrappers around `page.evaluate` calls
+ * to the `window.__R3F_DOM__` bridge interaction methods.
+ *
+ * All object-targeted interactions auto-wait for:
+ *   1. The bridge to be ready (`_ready === true`)
+ *   2. The target object to exist (by testId or uuid)
+ *
+ * This mirrors Playwright's built-in auto-waiting on locators.
+ *
+ * Multi-canvas: pass `canvasId` to target a specific canvas instance.
+ * When undefined, uses the default `window.__R3F_DOM__`.
+ */
+
 import type { Page } from '@playwright/test';
 import type { CameraState } from './types';
-
-// ---------------------------------------------------------------------------
-// Interaction helpers — thin wrappers around page.evaluate calls to
-// window.__R3F_DOM__ interaction methods.
-//
-// All object-targeted interactions auto-wait for:
-//   1. The bridge to be ready (_ready === true)
-//   2. The target object to exist (by testId or uuid)
-// This mirrors Playwright's built-in auto-waiting on locators.
-//
-// Multi-canvas: pass `canvasId` to target a specific canvas instance.
-// When undefined, uses the default `window.__R3F_DOM__`.
-// ---------------------------------------------------------------------------
 
 /** Default timeout for auto-waiting (ms). */
 const DEFAULT_AUTO_WAIT_TIMEOUT = 5_000;

@@ -1,3 +1,15 @@
+/**
+ * @module PanelApp
+ *
+ * Main React component for the react-three-dom Chrome DevTools panel.
+ * Renders a scene object tree (left pane), a property inspector (right pane),
+ * a search/filter bar, a canvas instance picker for multi-canvas apps, and
+ * an "inspect mode" toggle for picking 3D elements on the canvas.
+ *
+ * Polls the inspected page's `window.__R3F_DOM__` bridge for live scene
+ * snapshots and selection state.
+ */
+
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   checkBridgeReady,

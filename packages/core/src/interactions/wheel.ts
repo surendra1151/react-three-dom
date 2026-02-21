@@ -1,3 +1,10 @@
+/**
+ * @module wheel
+ *
+ * Deterministic wheel/scroll interaction on a 3D object. Projects the target
+ * to screen space and dispatches a synthetic WheelEvent on the canvas,
+ * triggering R3F's onWheel handler.
+ */
 import { projectToScreen } from './projection';
 import { dispatchWheel, type WheelOptions } from './dispatch';
 import { resolveObject, getCamera, getRenderer, getCanvasSize } from './resolve';

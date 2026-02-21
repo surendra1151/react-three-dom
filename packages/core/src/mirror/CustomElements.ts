@@ -1,3 +1,11 @@
+/**
+ * @module CustomElements
+ *
+ * Defines and registers the custom HTML elements (<three-scene>, <three-mesh>,
+ * <three-light>, etc.) used by DomMirror to represent Three.js objects in the
+ * DOM. The ThreeElement base class exposes interactive properties (metadata,
+ * inspect, object3D) accessible from the DevTools console via `$0.metadata`.
+ */
 import type { Object3D } from 'three';
 import type { ObjectMetadata, ObjectInspection } from '../types';
 import type { ObjectStore } from '../store/ObjectStore';

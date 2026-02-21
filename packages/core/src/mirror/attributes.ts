@@ -1,3 +1,10 @@
+/**
+ * @module attributes
+ *
+ * Serializes ObjectStore Tier 1 metadata into DOM data-attributes and applies
+ * them to mirror elements with minimal DOM writes. Only attributes whose values
+ * actually changed are written, keeping per-frame cost near zero for static objects.
+ */
 import type { ObjectMetadata } from '../types';
 
 // ---------------------------------------------------------------------------

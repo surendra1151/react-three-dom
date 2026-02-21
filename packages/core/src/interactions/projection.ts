@@ -1,3 +1,12 @@
+/**
+ * @module projection
+ *
+ * Projects Three.js objects from world space to screen-space CSS pixel
+ * coordinates using a multi-strategy approach (bbox center → face centers →
+ * corners → origin fallback). Also provides frustum visibility checks and
+ * screen-to-world conversion for drag deltas. Core utility used by all
+ * interaction modules to determine where to dispatch synthetic events.
+ */
 import {
   Object3D,
   Camera,

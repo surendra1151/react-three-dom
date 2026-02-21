@@ -1,3 +1,16 @@
+/**
+ * @module assertions
+ *
+ * Cypress Chai assertion methods for 3D scene testing via react-three-dom.
+ * Provides 27+ `r3f*` assertion methods covering object metadata (existence,
+ * visibility, position, rotation, scale, type, geometry, material, hierarchy),
+ * inspection data (frustum, bounds, color, opacity, transparency, vertices,
+ * triangles, userData, textures), scene-level counts, camera state, and
+ * batch assertions (allExist, allVisible, noneExist).
+ *
+ * Call {@link registerAssertions} from your Cypress support file to install.
+ */
+
 /// <reference types="cypress" />
 import type { R3FDOM, ObjectMetadata, ObjectInspection, SnapshotNode } from './types';
 import { _getActiveCanvasId } from './commands';
@@ -67,6 +80,7 @@ function collectTriangles(api: R3FDOM): number {
 // All 27 Chai assertions
 // ---------------------------------------------------------------------------
 
+/** Register all `r3f*` Chai assertion methods. Call once from your Cypress support file. */
 export function registerAssertions(): void {
   chai.use((_chai) => {
     const { Assertion } = _chai;

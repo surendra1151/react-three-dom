@@ -1,6 +1,12 @@
 /**
- * Bridge to the inspected page via chrome.devtools.inspectedWindow.eval.
- * Only works when the page has window.__R3F_DOM__ (i.e. uses @react-three-dom/core).
+ * @module pageBridge
+ *
+ * Bridge to the inspected page via `chrome.devtools.inspectedWindow.eval`.
+ * Provides typed functions for querying scene snapshots, selecting objects,
+ * inspecting properties, and toggling inspect mode. Only works when the
+ * page has `window.__R3F_DOM__` (i.e. uses `@react-three-dom/core`).
+ *
+ * Supports multi-canvas apps via {@link setTargetCanvas}.
  */
 
 export type SceneSnapshot = {

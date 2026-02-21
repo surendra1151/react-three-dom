@@ -1,3 +1,12 @@
+/**
+ * @module ObjectStore
+ *
+ * Central registry for all tracked Three.js objects in a react-three-dom session.
+ * Provides two-tier data access: Tier 1 (lightweight metadata cached per-frame)
+ * and Tier 2 (on-demand deep inspection of geometry, materials, and bounds).
+ * Designed for BIM-scale scenes (100k+ objects) with O(1) lookups by uuid,
+ * testId, and name, plus amortized flat-list iteration and async registration.
+ */
 import {
   Object3D,
   Mesh,
@@ -309,6 +318,12 @@ function inspectObject(obj: Object3D, metadata: ObjectMetadata, options?: Inspec
 // ObjectStore — the source of truth for all tracked Three.js objects
 // ---------------------------------------------------------------------------
 
+/**
+ * Source of truth for all tracked Three.js objects.
+ * Maintains O(1) indexes by uuid, testId, and name, a dirty queue for
+ * priority per-frame sync, and an event system for add/remove/update
+ * notifications consumed by DomMirror and the devtools panel.
+ */
 export class ObjectStore {
   // Tier 1: metadata for every tracked object
   private _metaByObject = new WeakMap<Object3D, ObjectMetadata>();

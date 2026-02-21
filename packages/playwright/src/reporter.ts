@@ -1,3 +1,12 @@
+/**
+ * @module reporter
+ *
+ * Rich terminal reporter for Playwright tests. Outputs ANSI-colored status
+ * messages for bridge lifecycle events (waiting, connected, error), scene
+ * readiness, object lookups (with fuzzy-match suggestions on miss),
+ * interaction timings, assertion failures, and full bridge diagnostics.
+ */
+
 import type { Page } from '@playwright/test';
 import type { BridgeDiagnostics } from './types';
 
@@ -28,6 +37,11 @@ function heading(msg: string): string { return `\n${TAG} ${BOLD}${MAGENTA}${msg}
 // R3FReporter — formatted terminal output for test lifecycle
 // ---------------------------------------------------------------------------
 
+/**
+ * Formatted terminal reporter for react-three-dom Playwright tests.
+ * Logs bridge lifecycle, scene readiness, interaction timings, assertion
+ * failures, and full diagnostics with ANSI colors.
+ */
 export class R3FReporter {
   private _enabled = true;
   private _canvasId?: string;

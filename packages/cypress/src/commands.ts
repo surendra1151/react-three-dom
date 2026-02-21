@@ -1,3 +1,16 @@
+/**
+ * @module commands
+ *
+ * Cypress custom commands for react-three-dom. Registers `cy.r3f*` commands
+ * for scene queries, interactions (click, hover, drag, draw), waiters,
+ * snapshot diffing, diagnostics, and multi-canvas support.
+ *
+ * All object-targeted commands auto-wait for the bridge and the target object,
+ * mirroring the Playwright fixture's auto-wait behaviour.
+ *
+ * Call {@link registerCommands} from your Cypress support file to install.
+ */
+
 /// <reference types="cypress" />
 import type { R3FDOM, SnapshotNode, SceneSnapshot, BridgeDiagnostics, ObjectMetadata } from './types';
 import { diffSnapshots } from './diffSnapshots';
@@ -157,6 +170,7 @@ function formatCypressSceneTree(node: SnapshotNode, prefix = '', isLast = true):
 // Custom commands
 // ---------------------------------------------------------------------------
 
+/** Register all `cy.r3f*` custom commands. Call once from your Cypress support file. */
 export function registerCommands(): void {
   // ---- Multi-canvas ----
   Cypress.Commands.add('r3fUseCanvas', (canvasId: string | null) => {

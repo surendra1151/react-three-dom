@@ -1,3 +1,11 @@
+/**
+ * @module dispatch
+ *
+ * Low-level synthetic PointerEvent/MouseEvent/WheelEvent dispatch on the
+ * canvas element. Produces the exact DOM event sequences that R3F's internal
+ * event system expects (e.g. pointerdown → pointerup → click). All higher-level
+ * interaction modules (click3D, hover3D, drag3D, etc.) delegate here.
+ */
 import type { ScreenPoint } from './projection';
 
 // ---------------------------------------------------------------------------

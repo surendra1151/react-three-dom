@@ -1,3 +1,11 @@
+/**
+ * @module resolve
+ *
+ * Shared resolution helpers for all interaction modules. Caches references
+ * to the current ObjectStore, Camera, WebGLRenderer, and canvas size (set
+ * by ThreeDom each frame) so interaction functions can resolve objects and
+ * access rendering state without prop-drilling.
+ */
 import type { Object3D, Camera, WebGLRenderer } from 'three';
 import type { ObjectStore } from '../store/ObjectStore';
 import type { CanvasSize } from './projection';

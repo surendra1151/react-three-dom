@@ -1,3 +1,19 @@
+/**
+ * @module waiters
+ *
+ * Polling-based wait utilities for Playwright tests. Each waiter polls the
+ * `window.__R3F_DOM__` bridge until a condition is met or a timeout fires.
+ *
+ * - {@link waitForSceneReady} — bridge ready + object count stabilised
+ * - {@link waitForObject} — bridge ready + specific object exists
+ * - {@link waitForIdle} — no property changes for N consecutive frames
+ * - {@link waitForNewObject} — new object(s) appear after a baseline snapshot
+ * - {@link waitForObjectRemoved} — object no longer in the scene
+ *
+ * All waiters fail fast with a rich diagnostic if the bridge reports an
+ * `_error` state, preventing silent timeouts.
+ */
+
 import type { Page } from '@playwright/test';
 import type { ObjectMetadata } from './types';
 

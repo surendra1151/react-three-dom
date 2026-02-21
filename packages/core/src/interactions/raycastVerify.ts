@@ -1,3 +1,11 @@
+/**
+ * @module raycastVerify
+ *
+ * Post-dispatch raycast verification for interaction modules. After a synthetic
+ * event is dispatched at projected screen coordinates, casts a ray to confirm
+ * the intended object is actually the frontmost hit. Reports occlusion with
+ * the identity of the occluding object for clear error messages.
+ */
 import {
   Raycaster,
   Vector2,

@@ -1,3 +1,12 @@
+/**
+ * @module RaycastAccelerator
+ *
+ * Two-layer acceleration structure for BIM-scale raycasting (100k+ objects).
+ * Layer 1 maintains a pre-filtered flat list of raycastable meshes from the
+ * ObjectStore (avoids recursive scene traversal). Layer 2 uses three-mesh-bvh
+ * to build per-geometry BVH trees, turning per-mesh triangle intersection
+ * from O(t) brute-force into O(log t). Combined: ~0.01–0.1ms at 200k objects.
+ */
 import {
   Raycaster,
   Vector2,
@@ -69,6 +78,11 @@ function isRaycastable(obj: Object3D): boolean {
   return true;
 }
 
+/**
+ * Maintains an accelerated raycast target list and per-geometry BVH trees.
+ * Rebuilds lazily when the ObjectStore emits changes, with a per-rebuild
+ * BVH budget to avoid blocking the main thread on large model loads.
+ */
 export class RaycastAccelerator {
   private _store: ObjectStore;
   private _targets: Object3D[] = [];
@@ -85,6 +99,7 @@ export class RaycastAccelerator {
     });
   }
 
+  /** Force a target list rebuild on the next raycast. */
   markDirty(): void {
     this._dirty = true;
   }
@@ -204,6 +219,7 @@ export class RaycastAccelerator {
     return this._targets.length;
   }
 
+  /** Unsubscribe from the store and release the target list. */
   dispose(): void {
     if (this._unsubscribe) {
       this._unsubscribe();

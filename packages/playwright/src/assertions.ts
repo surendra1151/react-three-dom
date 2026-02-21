@@ -1,25 +1,33 @@
+/**
+ * @module assertions
+ *
+ * Custom Playwright `expect` matchers for 3D scene testing via react-three-dom.
+ *
+ * Every matcher auto-retries until the assertion passes or the timeout
+ * expires, matching Playwright's built-in assertion behaviour.
+ *
+ * **Tier 1 — Metadata:** toExist, toBeVisible, toHavePosition,
+ * toHaveWorldPosition, toHaveRotation, toHaveScale, toHaveType, toHaveName,
+ * toHaveGeometryType, toHaveMaterialType, toHaveChildCount, toHaveParent,
+ * toHaveInstanceCount
+ *
+ * **Tier 2 — Inspection:** toBeInFrustum, toHaveBounds, toHaveColor,
+ * toHaveOpacity, toBeTransparent, toHaveVertexCount, toHaveTriangleCount,
+ * toHaveUserData, toHaveMapTexture
+ *
+ * **Scene-level:** toHaveObjectCount, toHaveObjectCountGreaterThan,
+ * toHaveCountByType, toHaveTotalTriangleCount,
+ * toHaveTotalTriangleCountLessThan
+ *
+ * **Camera:** toHaveCameraPosition, toHaveCameraFov, toHaveCameraNear,
+ * toHaveCameraFar, toHaveCameraZoom
+ *
+ * **Batch:** toAllExist, toAllBeVisible, toNoneExist
+ */
+
 import { expect as baseExpect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import type { ObjectMetadata, ObjectInspection } from './types';
-
-// ---------------------------------------------------------------------------
-// Custom Playwright expect matchers for 3D scene testing
-//
-// Every matcher auto-retries until the assertion passes or the timeout
-// expires, matching Playwright's built-in assertion behaviour.
-//
-// All 27 matchers:
-//  Tier 1 (metadata): toExist, toBeVisible, toHavePosition, toHaveWorldPosition, toHaveRotation,
-//    toHaveScale, toHaveType, toHaveName, toHaveGeometryType,
-//    toHaveMaterialType, toHaveChildCount, toHaveParent,
-//    toHaveInstanceCount
-//  Tier 2 (inspection): toBeInFrustum, toHaveBounds, toHaveColor,
-//    toHaveOpacity, toBeTransparent, toHaveVertexCount,
-//    toHaveTriangleCount, toHaveUserData, toHaveMapTexture
-//  Scene-level: toHaveObjectCount, toHaveObjectCountGreaterThan,
-//    toHaveCountByType, toHaveTotalTriangleCount,
-//    toHaveTotalTriangleCountLessThan
-// ---------------------------------------------------------------------------
 
 const DEFAULT_TIMEOUT = 5_000;
 const DEFAULT_INTERVAL = 100;

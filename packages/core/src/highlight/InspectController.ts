@@ -1,3 +1,12 @@
+/**
+ * @module InspectController
+ *
+ * Chrome DevTools-style inspect mode for 3D scenes. When enabled, intercepts
+ * mousemove/click on the WebGL canvas, raycasts to identify the object under
+ * the cursor, drives hover/selection highlights, and sets a global reference
+ * so the DevTools extension can reveal the corresponding mirror DOM node.
+ * Zero overhead when disabled — no listeners attached.
+ */
 import {
   Object3D,
   Camera,
@@ -26,6 +35,10 @@ import { r3fLog } from '../debug';
 const RAYCAST_THROTTLE_MS = 50;
 const HOVER_REVEAL_DEBOUNCE_MS = 300;
 
+/**
+ * Manages the inspect-mode lifecycle: attaches/detaches canvas event listeners,
+ * throttles raycasts, and coordinates Highlighter + SelectionManager + DomMirror.
+ */
 export class InspectController {
   private _active = false;
   private _camera: Camera;
@@ -68,6 +81,7 @@ export class InspectController {
     return this._active;
   }
 
+  /** Update the camera reference (e.g. after a camera switch). */
   updateCamera(camera: Camera): void {
     this._camera = camera;
   }
@@ -76,6 +90,7 @@ export class InspectController {
   // Enable / disable
   // -----------------------------------------------------------------------
 
+  /** Activate inspect mode — attaches canvas listeners and sets crosshair cursor. */
   enable(): void {
     if (this._active) return;
     this._active = true;
@@ -95,6 +110,7 @@ export class InspectController {
     r3fLog('inspect', 'Inspect mode enabled — hover to highlight, click to select');
   }
 
+  /** Deactivate inspect mode — removes all canvas listeners and clears hover state. */
   disable(): void {
     if (!this._active) return;
     this._active = false;
@@ -119,6 +135,7 @@ export class InspectController {
     r3fLog('inspect', 'InspectController disabled');
   }
 
+  /** Disable and release all resources. */
   dispose(): void {
     this.disable();
   }

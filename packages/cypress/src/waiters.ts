@@ -1,3 +1,17 @@
+/**
+ * @module waiters
+ *
+ * Cypress custom commands for waiting on react-three-dom bridge and scene
+ * state. Registers `cy.r3fWaitForSceneReady`, `cy.r3fWaitForIdle`,
+ * `cy.r3fWaitForObject`, `cy.r3fWaitForNewObject`, and
+ * `cy.r3fWaitForObjectRemoved`.
+ *
+ * All waiters fail fast with a rich diagnostic if the bridge reports an
+ * `_error` state, preventing silent timeouts.
+ *
+ * Call {@link registerWaiters} from your Cypress support file to install.
+ */
+
 /// <reference types="cypress" />
 import type { R3FDOM, ObjectMetadata, SnapshotNode, BridgeDiagnostics } from './types';
 import { _getReporter } from './reporterState';
@@ -51,6 +65,7 @@ function assertBridgeNotErrored(state: { exists: boolean; ready: boolean; error:
   }
 }
 
+/** Register all `cy.r3fWaitFor*` custom commands. Call once from your Cypress support file. */
 export function registerWaiters(): void {
   Cypress.Commands.add(
     'r3fWaitForSceneReady',

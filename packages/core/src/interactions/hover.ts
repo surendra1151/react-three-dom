@@ -1,3 +1,10 @@
+/**
+ * @module hover
+ *
+ * Deterministic hover and unhover interactions on 3D objects. Projects the
+ * target object to screen space and dispatches synthetic pointermove/pointerover
+ * events on the canvas, triggering R3F's onPointerOver/onPointerEnter handlers.
+ */
 import { projectToScreen } from './projection';
 import { dispatchHover, dispatchUnhover } from './dispatch';
 import { verifyRaycastHit } from './raycastVerify';

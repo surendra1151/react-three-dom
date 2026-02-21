@@ -1,3 +1,11 @@
+/**
+ * @module drag
+ *
+ * Deterministic drag interactions on 3D objects. Supports world-space deltas
+ * (move N units along an axis) and screen-space deltas (move N pixels).
+ * Projects start/end points and dispatches a full pointerdown → pointermove × N
+ * → pointerup sequence on the canvas.
+ */
 import { Vector3 } from 'three';
 import { projectToScreen, screenDeltaToWorld } from './projection';
 import { dispatchDrag, type DragOptions } from './dispatch';

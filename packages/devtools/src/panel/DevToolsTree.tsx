@@ -1,3 +1,14 @@
+/**
+ * @module DevToolsTree
+ *
+ * Collapsible scene-graph tree component for the react-three-dom DevTools
+ * panel. Renders Three.js objects as an interactive tree with type-colored
+ * icons, descendant counts for containers, and geometry/material badges.
+ *
+ * {@link buildTree} converts a flat `ObjectMetadata[]` list into a
+ * hierarchical {@link TreeNode} structure with computed descendant counts.
+ */
+
 import { useState, useCallback, type CSSProperties } from 'react';
 import type { ObjectMetadata } from './pageBridge';
 
@@ -23,6 +34,7 @@ export interface DevToolsTreeProps {
 // Build tree from flat list (with descendant counts)
 // ---------------------------------------------------------------------------
 
+/** Convert a flat ObjectMetadata list into a hierarchical tree with computed descendant counts. */
 export function buildTree(list: ObjectMetadata[]): TreeNode[] {
   const byUuid = new Map<string, ObjectMetadata>();
   for (const m of list) byUuid.set(m.uuid, m);
@@ -218,6 +230,7 @@ function TreeRow({
 // DevToolsTree — main component
 // ---------------------------------------------------------------------------
 
+/** Collapsible scene-graph tree with auto-expanded top levels and click-to-select. */
 export function DevToolsTree({ roots, selectedUuid, onSelect }: DevToolsTreeProps) {
   const [expandedSet, setExpandedSet] = useState<Set<string>>(() => {
     // Auto-expand top 2 levels

@@ -1,3 +1,15 @@
+/**
+ * @module reporter
+ *
+ * Rich diagnostic reporter for Cypress tests. Outputs ANSI-colored status
+ * messages to the Node-side terminal (via `cy.task('r3fLog')`) and to the
+ * Cypress command log for bridge lifecycle, scene readiness, object lookups,
+ * interaction timings, assertion failures, and full bridge diagnostics.
+ *
+ * Register the Node-side task with {@link registerR3FTasks} in
+ * `cypress.config.ts`, then use the browser-side {@link R3FReporter} class.
+ */
+
 /// <reference types="cypress" />
 import type { R3FDOM, BridgeDiagnostics, ObjectMetadata } from './types';
 
@@ -78,6 +90,11 @@ function getAPI(win: Cypress.AUTWindow): R3FDOM | null {
 // R3FReporter — Cypress equivalent of Playwright's R3FReporter
 // ---------------------------------------------------------------------------
 
+/**
+ * Browser-side reporter for Cypress tests. Logs bridge lifecycle,
+ * interaction timings, assertion failures, and diagnostics to both
+ * the Cypress command log and the Node-side terminal via `cy.task`.
+ */
 export class R3FReporter {
   constructor(enabled = true) {
     _enabled = enabled;

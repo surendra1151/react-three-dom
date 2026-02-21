@@ -1,3 +1,11 @@
+/**
+ * @module click
+ *
+ * Deterministic click, double-click, and context-menu interactions on 3D objects.
+ * Resolves an object by testId/uuid, projects it to screen space, dispatches
+ * synthetic pointer events on the canvas, and optionally verifies the hit via
+ * raycasting to detect occlusion.
+ */
 import { projectToScreen } from './projection';
 import { dispatchClick, dispatchDoubleClick, dispatchContextMenu } from './dispatch';
 import { verifyRaycastHit } from './raycastVerify';
