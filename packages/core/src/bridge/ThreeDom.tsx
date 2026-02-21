@@ -268,9 +268,17 @@ export function ThreeDom({
       if (!webglContext || (webglContext as WebGLRenderingContext).isContextLost?.()) {
         const msg =
           'WebGL context not available. For headless Chromium, add --enable-webgl and optionally --use-gl=angle --use-angle=swiftshader-webgl to launch args.';
-        window.__R3F_DOM__ = createStubBridge(msg);
+        const stubApi = createStubBridge(msg);
+        window.__R3F_DOM__ = stubApi;
         r3fLog('setup', msg);
-        return;
+        return () => {
+          removeGlobalAPI(stubApi);
+          canvas.removeAttribute('data-r3f-canvas');
+          if (createdRoot && rootElement?.parentNode) {
+            rootElement.parentNode.removeChild(rootElement);
+          }
+          if (debug) enableDebug(false);
+        };
       }
 
       // ---- Create store and mirror ----

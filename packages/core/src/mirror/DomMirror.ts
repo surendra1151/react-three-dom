@@ -190,20 +190,48 @@ export class DomMirror {
   /**
    * Remove a DOM node but keep JS metadata in the ObjectStore.
    * Called by LRU eviction or when an object is removed from the scene.
+   * Also dematerializes any materialized descendants so they don't become
+   * orphaned entries in the LRU / _nodes maps.
    */
   dematerialize(uuid: string): void {
     const node = this._nodes.get(uuid);
     if (!node) return;
 
-    // Remove from DOM
+    // Collect materialized descendants before removing the parent.
+    // Walk _parentMap to find children whose parent is this uuid.
+    const descendants = this._collectMaterializedDescendants(uuid);
+
+    // Dematerialize descendants bottom-up (deepest first doesn't matter
+    // since we're removing from maps, but process children before parent
+    // avoids redundant DOM detach since parent.remove() already detaches them).
+    for (const descUuid of descendants) {
+      const descNode = this._nodes.get(descUuid);
+      if (descNode) {
+        this._lruRemove(descNode.lruNode);
+        this._nodes.delete(descUuid);
+        this._parentMap.delete(descUuid);
+      }
+    }
+
+    // Remove the node itself
     node.element.remove();
-
-    // Remove from LRU
     this._lruRemove(node.lruNode);
-
-    // Clean up
     this._nodes.delete(uuid);
     this._parentMap.delete(uuid);
+  }
+
+  /**
+   * Collect all materialized descendants of a uuid by walking _parentMap.
+   */
+  private _collectMaterializedDescendants(parentUuid: string): string[] {
+    const result: string[] = [];
+    for (const [childUuid, pUuid] of this._parentMap) {
+      if (pUuid === parentUuid) {
+        result.push(childUuid);
+        result.push(...this._collectMaterializedDescendants(childUuid));
+      }
+    }
+    return result;
   }
 
   // -------------------------------------------------------------------------

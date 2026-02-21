@@ -55,11 +55,18 @@ const _mouse = /* @__PURE__ */ new Vector2();
 function isRaycastable(obj: Object3D): boolean {
   if (obj.userData?.__r3fdom_internal) return false;
   if (!obj.visible) return false;
-  return (
+  const isMeshLike =
     (obj as Mesh).isMesh === true ||
     (obj as Line).isLine === true ||
-    (obj as Points).isPoints === true
-  );
+    (obj as Points).isPoints === true;
+  if (!isMeshLike) return false;
+  // Skip objects with disposed geometry (position attribute array is null after dispose)
+  const geom = (obj as Mesh).geometry;
+  if (geom) {
+    const posAttr = geom.getAttribute('position');
+    if (posAttr && !posAttr.array) return false;
+  }
+  return true;
 }
 
 export class RaycastAccelerator {
