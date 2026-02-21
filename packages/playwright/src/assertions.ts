@@ -28,25 +28,25 @@ const DEFAULT_INTERVAL = 100;
 // Scene-level helpers
 // ---------------------------------------------------------------------------
 
-async function fetchSceneCount(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    const api = window.__R3F_DOM__;
+async function fetchSceneCount(page: Page, canvasId?: string): Promise<number> {
+  return page.evaluate((cid) => {
+    const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
     return api ? api.getCount() : 0;
-  });
+  }, canvasId ?? null);
 }
 
-async function fetchCountByType(page: Page, type: string): Promise<number> {
-  return page.evaluate((t) => {
-    const api = window.__R3F_DOM__;
+async function fetchCountByType(page: Page, type: string, canvasId?: string): Promise<number> {
+  return page.evaluate(([t, cid]) => {
+    const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
     return api ? api.getCountByType(t) : 0;
-  }, type);
+  }, [type, canvasId ?? null] as const);
 }
 
-async function fetchTotalTriangles(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    const api = window.__R3F_DOM__;
+async function fetchTotalTriangles(page: Page, canvasId?: string): Promise<number> {
+  return page.evaluate((cid) => {
+    const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
     if (!api) return 0;
-    const bridge = api; // capture for nested function
+    const bridge = api;
     const snap = bridge.snapshot();
     let total = 0;
     function walk(node: { uuid: string; children: unknown[] }) {
@@ -58,43 +58,44 @@ async function fetchTotalTriangles(page: Page): Promise<number> {
     }
     walk(snap.tree as unknown as { uuid: string; children: unknown[] });
     return total;
-  });
+  }, canvasId ?? null);
 }
 
 // ---------------------------------------------------------------------------
 // Object-level helpers
 // ---------------------------------------------------------------------------
 
-async function fetchMeta(page: Page, id: string): Promise<ObjectMetadata | null> {
-  return page.evaluate((i) => {
-    const api = window.__R3F_DOM__;
+async function fetchMeta(page: Page, id: string, canvasId?: string): Promise<ObjectMetadata | null> {
+  return page.evaluate(([i, cid]) => {
+    const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
     if (!api) return null;
     return api.getByTestId(i) ?? api.getByUuid(i) ?? null;
-  }, id);
+  }, [id, canvasId ?? null] as const);
 }
 
-async function fetchInsp(page: Page, id: string): Promise<ObjectInspection | null> {
-  return page.evaluate((i) => {
-    const api = window.__R3F_DOM__;
+async function fetchInsp(page: Page, id: string, canvasId?: string): Promise<ObjectInspection | null> {
+  return page.evaluate(([i, cid]) => {
+    const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
     if (!api) return null;
     return api.inspect(i);
-  }, id);
+  }, [id, canvasId ?? null] as const);
 }
 
 /** World position from column-major 4x4 matrix (translation at indices 12, 13, 14). */
-async function fetchWorldPosition(page: Page, id: string): Promise<[number, number, number] | null> {
-  return page.evaluate((i) => {
-    const api = window.__R3F_DOM__;
+async function fetchWorldPosition(page: Page, id: string, canvasId?: string): Promise<[number, number, number] | null> {
+  return page.evaluate(([i, cid]) => {
+    const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
     if (!api) return null;
     const insp = api.inspect(i);
     if (!insp || !insp.worldMatrix || insp.worldMatrix.length < 15) return null;
     const m = insp.worldMatrix;
     return [m[12], m[13], m[14]];
-  }, id);
+  }, [id, canvasId ?? null] as const);
 }
 
 interface R3FMatcherReceiver {
   page: Page;
+  canvasId?: string;
   getObject(idOrUuid: string): Promise<ObjectMetadata | null>;
   inspect(idOrUuid: string): Promise<ObjectInspection | null>;
 }
@@ -120,17 +121,17 @@ function parseTol(v: number | Vec3Opts | undefined, def: number) {
   };
 }
 
-async function fetchFuzzyHints(page: Page, query: string): Promise<string> {
+async function fetchFuzzyHints(page: Page, query: string, canvasId?: string): Promise<string> {
   try {
     const suggestions = await page.evaluate(
-      ({ q }) => {
-        const api = window.__R3F_DOM__;
+      ({ q, cid }) => {
+        const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
         if (!api || typeof api.fuzzyFind !== 'function') return [];
         return api.fuzzyFind(q, 5).map((m: { testId?: string; name: string; uuid: string }) => ({
           testId: m.testId, name: m.name, uuid: m.uuid,
         }));
       },
-      { q: query },
+      { q: query, cid: canvasId ?? null },
     );
     if (suggestions.length === 0) return '';
     return '\nDid you mean:\n' + suggestions.map((s: { testId?: string; name: string; uuid: string }) => {
@@ -142,13 +143,13 @@ async function fetchFuzzyHints(page: Page, query: string): Promise<string> {
   }
 }
 
-async function fetchDiagnosticHint(page: Page): Promise<string> {
+async function fetchDiagnosticHint(page: Page, canvasId?: string): Promise<string> {
   try {
-    const diag = await page.evaluate(() => {
-      const api = window.__R3F_DOM__;
+    const diag = await page.evaluate((cid) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       if (!api || typeof api.getDiagnostics !== 'function') return null;
       return api.getDiagnostics();
-    });
+    }, canvasId ?? null);
     if (!diag) return '';
     return `\nBridge: v${diag.version} ready=${diag.ready}, ${diag.objectCount} objects (${diag.meshCount} meshes)`;
   } catch {
@@ -156,10 +157,10 @@ async function fetchDiagnosticHint(page: Page): Promise<string> {
   }
 }
 
-async function notFoundAsync(page: Page, name: string, id: string, detail: string, timeout: number) {
+async function notFoundAsync(page: Page, name: string, id: string, detail: string, timeout: number, canvasId?: string) {
   const [fuzzy, diag] = await Promise.all([
-    fetchFuzzyHints(page, id),
-    fetchDiagnosticHint(page),
+    fetchFuzzyHints(page, id, canvasId),
+    fetchDiagnosticHint(page, canvasId),
   ]);
   return {
     pass: false,
@@ -185,7 +186,7 @@ const r3fMatchers = {
     let meta: ObjectMetadata | null = null;
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         return meta !== null;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
@@ -207,11 +208,11 @@ const r3fMatchers = {
     let meta: ObjectMetadata | null = null;
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         return meta?.visible ?? false;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toBeVisible', id, 'to be visible', timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toBeVisible', id, 'to be visible', timeout, r3f.canvasId);
     const m = meta as ObjectMetadata;
     return {
       pass: m.visible,
@@ -231,14 +232,14 @@ const r3fMatchers = {
     let delta: [number, number, number] = [0, 0, 0];
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         if (!meta) return false;
         delta = [Math.abs(meta.position[0] - expected[0]), Math.abs(meta.position[1] - expected[1]), Math.abs(meta.position[2] - expected[2])];
         pass = delta.every(d => d <= tolerance);
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toHavePosition', id, `to have position [${expected}]`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHavePosition', id, `to have position [${expected}]`, timeout, r3f.canvasId);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -258,14 +259,14 @@ const r3fMatchers = {
     let delta: [number, number, number] = [0, 0, 0];
     try {
       await baseExpect.poll(async () => {
-        worldPos = await fetchWorldPosition(r3f.page, id);
+        worldPos = await fetchWorldPosition(r3f.page, id, r3f.canvasId);
         if (!worldPos) return false;
         delta = [Math.abs(worldPos[0] - expected[0]), Math.abs(worldPos[1] - expected[1]), Math.abs(worldPos[2] - expected[2])];
         pass = delta.every((d) => d <= tolerance);
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!worldPos) return notFoundAsync(r3f.page, 'toHaveWorldPosition', id, `to have world position [${expected}]`, timeout);
+    if (!worldPos) return notFoundAsync(r3f.page, 'toHaveWorldPosition', id, `to have world position [${expected}]`, timeout, r3f.canvasId);
     const actualWorldPos: [number, number, number] = worldPos;
     return {
       pass,
@@ -286,14 +287,14 @@ const r3fMatchers = {
     let delta: [number, number, number] = [0, 0, 0];
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         if (!meta) return false;
         delta = [Math.abs(meta.rotation[0] - expected[0]), Math.abs(meta.rotation[1] - expected[1]), Math.abs(meta.rotation[2] - expected[2])];
         pass = delta.every(d => d <= tolerance);
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toHaveRotation', id, `to have rotation [${expected}]`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveRotation', id, `to have rotation [${expected}]`, timeout, r3f.canvasId);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -313,14 +314,14 @@ const r3fMatchers = {
     let delta: [number, number, number] = [0, 0, 0];
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         if (!meta) return false;
         delta = [Math.abs(meta.scale[0] - expected[0]), Math.abs(meta.scale[1] - expected[1]), Math.abs(meta.scale[2] - expected[2])];
         pass = delta.every(d => d <= tolerance);
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toHaveScale', id, `to have scale [${expected}]`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveScale', id, `to have scale [${expected}]`, timeout, r3f.canvasId);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -340,13 +341,13 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         if (!meta) return false;
         pass = meta.type === expectedType;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toHaveType', id, `to have type "${expectedType}"`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveType', id, `to have type "${expectedType}"`, timeout, r3f.canvasId);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -366,13 +367,13 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         if (!meta) return false;
         pass = meta.name === expectedName;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toHaveName', id, `to have name "${expectedName}"`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveName', id, `to have name "${expectedName}"`, timeout, r3f.canvasId);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -392,13 +393,13 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         if (!meta) return false;
         pass = meta.geometryType === expectedGeo;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toHaveGeometryType', id, `to have geometry "${expectedGeo}"`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveGeometryType', id, `to have geometry "${expectedGeo}"`, timeout, r3f.canvasId);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -418,13 +419,13 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         if (!meta) return false;
         pass = meta.materialType === expectedMat;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toHaveMaterialType', id, `to have material "${expectedMat}"`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveMaterialType', id, `to have material "${expectedMat}"`, timeout, r3f.canvasId);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -444,13 +445,13 @@ const r3fMatchers = {
     let actual = 0;
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         if (!meta) return false;
         actual = meta.childrenUuids.length;
         return actual === expectedCount;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toHaveChildCount', id, `to have ${expectedCount} children`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveChildCount', id, `to have ${expectedCount} children`, timeout, r3f.canvasId);
     const pass = actual === expectedCount;
     return {
       pass,
@@ -471,15 +472,15 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         if (!meta?.parentUuid) return false;
-        parentMeta = await fetchMeta(r3f.page, meta.parentUuid);
+        parentMeta = await fetchMeta(r3f.page, meta.parentUuid, r3f.canvasId);
         if (!parentMeta) return false;
         pass = parentMeta.uuid === expectedParent || parentMeta.testId === expectedParent || parentMeta.name === expectedParent;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toHaveParent', id, `to have parent "${expectedParent}"`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveParent', id, `to have parent "${expectedParent}"`, timeout, r3f.canvasId);
     const m = meta as ObjectMetadata;
     const pm = parentMeta as ObjectMetadata | null;
     const parentLabel = pm?.testId ?? pm?.name ?? m.parentUuid;
@@ -501,12 +502,12 @@ const r3fMatchers = {
     let actual = 0;
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         actual = meta?.instanceCount ?? 0;
         return actual === expectedCount;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toHaveInstanceCount', id, `to have instance count ${expectedCount}`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveInstanceCount', id, `to have instance count ${expectedCount}`, timeout, r3f.canvasId);
     const pass = actual === expectedCount;
     return {
       pass,
@@ -528,14 +529,14 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        insp = await fetchInsp(r3f.page, id);
+        insp = await fetchInsp(r3f.page, id, r3f.canvasId);
         if (!insp) return false;
         const fin = (v: number[]) => v.every(Number.isFinite);
         pass = fin(insp.bounds.min) && fin(insp.bounds.max);
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFoundAsync(r3f.page, 'toBeInFrustum', id, 'to be in frustum', timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toBeInFrustum', id, 'to be in frustum', timeout, r3f.canvasId);
     const i = insp as ObjectInspection;
     return {
       pass,
@@ -558,14 +559,14 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        insp = await fetchInsp(r3f.page, id);
+        insp = await fetchInsp(r3f.page, id, r3f.canvasId);
         if (!insp) return false;
         const w = (a: number[], b: number[]) => a.every((v, j) => Math.abs(v - b[j]) <= tolerance);
         pass = w(insp.bounds.min, expected.min) && w(insp.bounds.max, expected.max);
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFoundAsync(r3f.page, 'toHaveBounds', id, 'to have specific bounds', timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toHaveBounds', id, 'to have specific bounds', timeout, r3f.canvasId);
     const i = insp as ObjectInspection;
     return {
       pass,
@@ -587,14 +588,14 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        insp = await fetchInsp(r3f.page, id);
+        insp = await fetchInsp(r3f.page, id, r3f.canvasId);
         if (!insp?.material?.color) return false;
         actual = insp.material.color.toLowerCase();
         pass = actual === norm;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFoundAsync(r3f.page, 'toHaveColor', id, `to have color "${norm}"`, timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toHaveColor', id, `to have color "${norm}"`, timeout, r3f.canvasId);
     return {
       pass,
       message: () => pass
@@ -613,14 +614,14 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        insp = await fetchInsp(r3f.page, id);
+        insp = await fetchInsp(r3f.page, id, r3f.canvasId);
         if (!insp?.material) return false;
         actual = insp.material.opacity;
         pass = actual !== undefined && Math.abs(actual - expectedOpacity) <= tolerance;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFoundAsync(r3f.page, 'toHaveOpacity', id, `to have opacity ${expectedOpacity}`, timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toHaveOpacity', id, `to have opacity ${expectedOpacity}`, timeout, r3f.canvasId);
     return {
       pass,
       message: () => pass
@@ -639,13 +640,13 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        insp = await fetchInsp(r3f.page, id);
+        insp = await fetchInsp(r3f.page, id, r3f.canvasId);
         if (!insp?.material) return false;
         pass = insp.material.transparent === true;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFoundAsync(r3f.page, 'toBeTransparent', id, 'to be transparent', timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toBeTransparent', id, 'to be transparent', timeout, r3f.canvasId);
     const i = insp as ObjectInspection;
     return {
       pass,
@@ -665,12 +666,12 @@ const r3fMatchers = {
     let actual = 0;
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         actual = meta?.vertexCount ?? 0;
         return actual === expectedCount;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toHaveVertexCount', id, `to have ${expectedCount} vertices`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveVertexCount', id, `to have ${expectedCount} vertices`, timeout, r3f.canvasId);
     const pass = actual === expectedCount;
     return {
       pass,
@@ -690,12 +691,12 @@ const r3fMatchers = {
     let actual = 0;
     try {
       await baseExpect.poll(async () => {
-        meta = await fetchMeta(r3f.page, id);
+        meta = await fetchMeta(r3f.page, id, r3f.canvasId);
         actual = meta?.triangleCount ?? 0;
         return actual === expectedCount;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFoundAsync(r3f.page, 'toHaveTriangleCount', id, `to have ${expectedCount} triangles`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveTriangleCount', id, `to have ${expectedCount} triangles`, timeout, r3f.canvasId);
     const pass = actual === expectedCount;
     return {
       pass,
@@ -716,7 +717,7 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        insp = await fetchInsp(r3f.page, id);
+        insp = await fetchInsp(r3f.page, id, r3f.canvasId);
         if (!insp) return false;
         if (!(key in insp.userData)) return false;
         if (expectedValue === undefined) { pass = true; return true; }
@@ -725,7 +726,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFoundAsync(r3f.page, 'toHaveUserData', id, `to have userData.${key}`, timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toHaveUserData', id, `to have userData.${key}`, timeout, r3f.canvasId);
     return {
       pass,
       message: () => {
@@ -752,7 +753,7 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        insp = await fetchInsp(r3f.page, id);
+        insp = await fetchInsp(r3f.page, id, r3f.canvasId);
         if (!insp?.material?.map) return false;
         actual = insp.material.map;
         if (!expectedName) { pass = true; return true; }
@@ -760,7 +761,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFoundAsync(r3f.page, 'toHaveMapTexture', id, 'to have a map texture', timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toHaveMapTexture', id, 'to have a map texture', timeout, r3f.canvasId);
     return {
       pass,
       message: () => {
@@ -800,7 +801,7 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        actual = await fetchSceneCount(r3f.page);
+        actual = await fetchSceneCount(r3f.page, r3f.canvasId);
         pass = actual === expected;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
@@ -833,7 +834,7 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        actual = await fetchSceneCount(r3f.page);
+        actual = await fetchSceneCount(r3f.page, r3f.canvasId);
         pass = actual > min;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
@@ -868,7 +869,7 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        actual = await fetchCountByType(r3f.page, type);
+        actual = await fetchCountByType(r3f.page, type, r3f.canvasId);
         pass = actual === expected;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
@@ -902,7 +903,7 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        actual = await fetchTotalTriangles(r3f.page);
+        actual = await fetchTotalTriangles(r3f.page, r3f.canvasId);
         pass = actual === expected;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
@@ -935,7 +936,7 @@ const r3fMatchers = {
     let pass = false;
     try {
       await baseExpect.poll(async () => {
-        actual = await fetchTotalTriangles(r3f.page);
+        actual = await fetchTotalTriangles(r3f.page, r3f.canvasId);
         pass = actual < max;
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
@@ -949,6 +950,313 @@ const r3fMatchers = {
       name: 'toHaveTotalTriangleCountLessThan', expected: `< ${max}`, actual,
     };
   },
+  // ===================== CAMERA STATE ASSERTIONS ===========================
+
+  /**
+   * Assert the camera position is close to the expected [x, y, z].
+   *
+   * @example expect(r3f).toHaveCameraPosition([0, 5, 10], 0.1);
+   */
+  async toHaveCameraPosition(
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
+    expected: [number, number, number],
+    tolOpts?: number | Vec3Opts,
+  ) {
+    const { timeout, interval, tolerance } = parseTol(tolOpts, 0.1);
+    const isNot = this.isNot;
+    let actual: [number, number, number] = [0, 0, 0];
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        const cam = await r3f.page.evaluate((cid) => { const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__; return api!.getCameraState(); }, r3f.canvasId ?? null);
+        actual = cam.position;
+        pass = Math.abs(actual[0] - expected[0]) <= tolerance
+            && Math.abs(actual[1] - expected[1]) <= tolerance
+            && Math.abs(actual[2] - expected[2]) <= tolerance;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected camera NOT at [${expected}], but it is`
+          : `Expected camera at [${expected}], got [${actual}] (tol=${tolerance}, waited ${timeout}ms)`,
+      name: 'toHaveCameraPosition', expected, actual,
+    };
+  },
+
+  /**
+   * Assert the camera field of view (PerspectiveCamera only).
+   *
+   * @example expect(r3f).toHaveCameraFov(75);
+   */
+  async toHaveCameraFov(
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
+    expected: number,
+    tolOpts?: number | Vec3Opts,
+  ) {
+    const { timeout, interval, tolerance } = parseTol(tolOpts, 0.1);
+    const isNot = this.isNot;
+    let actual: number | undefined;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        const cam = await r3f.page.evaluate((cid) => { const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__; return api!.getCameraState(); }, r3f.canvasId ?? null);
+        actual = cam.fov;
+        pass = actual !== undefined && Math.abs(actual - expected) <= tolerance;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected camera NOT to have fov ${expected}, but it does`
+          : `Expected camera fov ${expected}, got ${actual ?? 'N/A'} (tol=${tolerance}, waited ${timeout}ms)`,
+      name: 'toHaveCameraFov', expected, actual,
+    };
+  },
+
+  /**
+   * Assert the camera near clipping plane.
+   *
+   * @example expect(r3f).toHaveCameraNear(0.1);
+   */
+  async toHaveCameraNear(
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
+    expected: number,
+    tolOpts?: number | Vec3Opts,
+  ) {
+    const { timeout, interval, tolerance } = parseTol(tolOpts, 0.01);
+    const isNot = this.isNot;
+    let actual = 0;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        const cam = await r3f.page.evaluate((cid) => { const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__; return api!.getCameraState(); }, r3f.canvasId ?? null);
+        actual = cam.near;
+        pass = Math.abs(actual - expected) <= tolerance;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected camera near NOT ${expected}, but it is`
+          : `Expected camera near ${expected}, got ${actual} (tol=${tolerance}, waited ${timeout}ms)`,
+      name: 'toHaveCameraNear', expected, actual,
+    };
+  },
+
+  /**
+   * Assert the camera far clipping plane.
+   *
+   * @example expect(r3f).toHaveCameraFar(1000);
+   */
+  async toHaveCameraFar(
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
+    expected: number,
+    tolOpts?: number | Vec3Opts,
+  ) {
+    const { timeout, interval, tolerance } = parseTol(tolOpts, 1);
+    const isNot = this.isNot;
+    let actual = 0;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        const cam = await r3f.page.evaluate((cid) => { const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__; return api!.getCameraState(); }, r3f.canvasId ?? null);
+        actual = cam.far;
+        pass = Math.abs(actual - expected) <= tolerance;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected camera far NOT ${expected}, but it is`
+          : `Expected camera far ${expected}, got ${actual} (tol=${tolerance}, waited ${timeout}ms)`,
+      name: 'toHaveCameraFar', expected, actual,
+    };
+  },
+
+  /**
+   * Assert the camera zoom level.
+   *
+   * @example expect(r3f).toHaveCameraZoom(1);
+   */
+  async toHaveCameraZoom(
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
+    expected: number,
+    tolOpts?: number | Vec3Opts,
+  ) {
+    const { timeout, interval, tolerance } = parseTol(tolOpts, 0.01);
+    const isNot = this.isNot;
+    let actual = 0;
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        const cam = await r3f.page.evaluate((cid) => { const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__; return api!.getCameraState(); }, r3f.canvasId ?? null);
+        actual = cam.zoom;
+        pass = Math.abs(actual - expected) <= tolerance;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected camera zoom NOT ${expected}, but it is`
+          : `Expected camera zoom ${expected}, got ${actual} (tol=${tolerance}, waited ${timeout}ms)`,
+      name: 'toHaveCameraZoom', expected, actual,
+    };
+  },
+
+  // ======================== BATCH ASSERTIONS ==============================
+
+  /**
+   * Assert that ALL given objects exist in the scene.
+   * Accepts an array of testIds/uuids or a glob pattern (e.g. "wall-*").
+   *
+   * @example expect(r3f).toAllExist(['wall-1', 'wall-2', 'floor']);
+   * @example expect(r3f).toAllExist('wall-*');
+   */
+  async toAllExist(
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
+    idsOrPattern: string[] | string,
+    opts?: MatcherOptions,
+  ) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let missing: string[] = [];
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        const ids = typeof idsOrPattern === 'string'
+          ? await resolvePattern(r3f.page, idsOrPattern, r3f.canvasId)
+          : idsOrPattern;
+        missing = [];
+        for (const id of ids) {
+          const m = await r3f.getObject(id);
+          if (!m) missing.push(id);
+        }
+        pass = missing.length === 0 && ids.length > 0;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected some objects to NOT exist, but all do`
+          : `Objects not found: [${missing.join(', ')}] (waited ${timeout}ms)`,
+      name: 'toAllExist', expected: idsOrPattern, actual: { missing },
+    };
+  },
+
+  /**
+   * Assert that ALL given objects are visible.
+   *
+   * @example expect(r3f).toAllBeVisible(['wall-1', 'wall-2', 'floor']);
+   * @example expect(r3f).toAllBeVisible('wall-*');
+   */
+  async toAllBeVisible(
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
+    idsOrPattern: string[] | string,
+    opts?: MatcherOptions,
+  ) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let hidden: string[] = [];
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        const ids = typeof idsOrPattern === 'string'
+          ? await resolvePattern(r3f.page, idsOrPattern, r3f.canvasId)
+          : idsOrPattern;
+        hidden = [];
+        for (const id of ids) {
+          const m = await r3f.getObject(id);
+          if (!m || !m.visible) hidden.push(id);
+        }
+        pass = hidden.length === 0 && ids.length > 0;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected some objects to NOT be visible, but all are`
+          : `Objects not visible: [${hidden.join(', ')}] (waited ${timeout}ms)`,
+      name: 'toAllBeVisible', expected: idsOrPattern, actual: { hidden },
+    };
+  },
+
+  /**
+   * Assert that NONE of the given objects exist in the scene.
+   *
+   * @example expect(r3f).toNoneExist(['deleted-wall', 'old-floor']);
+   * @example expect(r3f).toNoneExist('temp-*');
+   */
+  async toNoneExist(
+    this: ExpectMatcherContext, r3f: R3FMatcherReceiver,
+    idsOrPattern: string[] | string,
+    opts?: MatcherOptions,
+  ) {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT;
+    const interval = opts?.interval ?? DEFAULT_INTERVAL;
+    const isNot = this.isNot;
+    let found: string[] = [];
+    let pass = false;
+    try {
+      await baseExpect.poll(async () => {
+        const ids = typeof idsOrPattern === 'string'
+          ? await resolvePattern(r3f.page, idsOrPattern, r3f.canvasId)
+          : idsOrPattern;
+        found = [];
+        for (const id of ids) {
+          const m = await r3f.getObject(id);
+          if (m) found.push(id);
+        }
+        pass = found.length === 0;
+        return pass;
+      }, { timeout, intervals: [interval] }).toBe(!isNot);
+    } catch { /* */ }
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected some objects to exist, but none do`
+          : `Objects still exist: [${found.join(', ')}] (waited ${timeout}ms)`,
+      name: 'toNoneExist', expected: idsOrPattern, actual: { found },
+    };
+  },
 };
+
+// ---------------------------------------------------------------------------
+// Batch helper — resolve glob/wildcard patterns to matching testIds
+// ---------------------------------------------------------------------------
+
+async function resolvePattern(page: Page, pattern: string, canvasId?: string): Promise<string[]> {
+  return page.evaluate(([p, cid]) => {
+    const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
+    if (!api) return [];
+    const snap = api.snapshot();
+    const ids: string[] = [];
+    const regex = new RegExp('^' + p.replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+    function walk(node: { uuid: string; name: string; type: string; testId?: string; children: unknown[] }) {
+      const testId = (node as { testId?: string }).testId ?? node.name;
+      if (regex.test(testId) || regex.test(node.uuid)) ids.push(testId || node.uuid);
+      for (const child of (node.children ?? []) as typeof node[]) walk(child);
+    }
+    walk(snap.tree as Parameters<typeof walk>[0]);
+    return ids;
+  }, [pattern, canvasId ?? null] as const);
+}
 
 export { r3fMatchers };

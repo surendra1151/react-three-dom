@@ -16,6 +16,10 @@ export interface ObjectMetadata {
   vertexCount?: number;
   triangleCount?: number;
   instanceCount?: number;
+  fov?: number;
+  near?: number;
+  far?: number;
+  zoom?: number;
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
@@ -71,6 +75,39 @@ export interface SceneSnapshot {
   timestamp: number;
   objectCount: number;
   tree: SnapshotNode;
+}
+
+export interface CameraState {
+  type: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  target: [number, number, number];
+  fov?: number;
+  near: number;
+  far: number;
+  zoom: number;
+  aspect?: number;
+  left?: number;
+  right?: number;
+  top?: number;
+  bottom?: number;
+}
+
+export interface BridgeDiagnostics {
+  version: string;
+  ready: boolean;
+  error?: string;
+  objectCount: number;
+  meshCount: number;
+  groupCount: number;
+  lightCount: number;
+  cameraCount: number;
+  materializedDomNodes: number;
+  maxDomNodes: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  webglRenderer: string;
+  dirtyQueueSize: number;
 }
 
 // ---------------------------------------------------------------------------

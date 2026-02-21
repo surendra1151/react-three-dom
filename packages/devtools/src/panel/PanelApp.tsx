@@ -7,6 +7,9 @@ import {
   inspect,
   setInspectMode,
   flattenSnapshotTree,
+  getCanvasIds,
+  setTargetCanvas,
+  getTargetCanvas,
   type ObjectMetadata,
   type ObjectInspection,
   type GeometryInspection,
@@ -87,6 +90,18 @@ function MaterialSection({ mat }: { mat: MaterialInspection }) {
   );
 }
 
+function CameraSection({ meta }: { meta: ObjectMetadata }) {
+  return (
+    <>
+      <div style={panelStyles.propSection}>Camera</div>
+      {meta.fov != null && <PropRow label="FOV" value={`${meta.fov}°`} />}
+      {meta.near != null && <PropRow label="Near" value={String(meta.near)} />}
+      {meta.far != null && <PropRow label="Far" value={String(meta.far)} />}
+      {meta.zoom != null && <PropRow label="Zoom" value={String(meta.zoom)} />}
+    </>
+  );
+}
+
 function PropertyDetail({ data }: { data: ObjectInspection | null }) {
   if (!data) {
     return (
@@ -112,6 +127,8 @@ function PropertyDetail({ data }: { data: ObjectInspection | null }) {
       <PropRow label="Position" value={fmtVec(m.position)} />
       <PropRow label="Rotation" value={fmtVec(m.rotation)} />
       <PropRow label="Scale" value={fmtVec(m.scale)} />
+
+      {m.near != null && <CameraSection meta={m} />}
 
       {data.geometry && <GeometrySection geo={data.geometry} meta={m} />}
 
@@ -184,6 +201,27 @@ export function PanelApp() {
   const [searchQuery, setSearchQuery] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(true);
   const [inspectModeOn, setInspectModeOn] = useState(false);
+  const [canvasIds, setCanvasIds] = useState<string[]>([]);
+  const [activeCanvas, setActiveCanvas] = useState<string | null>(getTargetCanvas());
+
+  const handleCanvasChange = useCallback((canvasId: string | null) => {
+    setTargetCanvas(canvasId);
+    setActiveCanvas(canvasId);
+    setSelectedUuid(null);
+    setInspection(null);
+  }, []);
+
+  // Poll for available canvas IDs
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      const ids = await getCanvasIds();
+      if (!cancelled) setCanvasIds(ids);
+    };
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
 
   // Check bridge and poll snapshot
   useEffect(() => {
@@ -203,14 +241,22 @@ export function PanelApp() {
     tick();
     const id = setInterval(tick, REFRESH_MS);
     return () => { cancelled = true; clearInterval(id); };
-  }, []);
+  }, [activeCanvas]);
 
-  // Poll selection from page
+  // Poll the SelectionManager for changes from canvas inspect clicks.
+  // Elements tab sync is handled by devtools.js setting __r3fdom_hovered__
+  // which the Highlighter picks up directly — the panel only needs to track
+  // its own selection and the SelectionManager.
   useEffect(() => {
     if (!ready) return;
+    let lastPolledUuid: string | null = null;
     const tick = async () => {
       const uuids = await getSelection();
-      setSelectedUuid((prev) => (uuids.length > 0 ? uuids[0] : prev));
+      const current = uuids.length > 0 ? uuids[0] : null;
+      if (current && current !== lastPolledUuid) {
+        lastPolledUuid = current;
+        setSelectedUuid(current);
+      }
     };
     tick();
     const id = setInterval(tick, SELECTION_POLL_MS);
@@ -279,8 +325,27 @@ export function PanelApp() {
 
   return (
     <div style={panelStyles.container}>
-      {/* Search bar + Select on canvas */}
+      {/* Search bar + Canvas picker + Select on canvas */}
       <div style={panelStyles.searchBar}>
+        {canvasIds.length > 0 && (
+          <select
+            value={activeCanvas ?? ''}
+            onChange={(e) => handleCanvasChange(e.target.value || null)}
+            style={{
+              ...panelStyles.searchInput,
+              flex: 'none',
+              width: 'auto',
+              minWidth: 80,
+              cursor: 'pointer',
+            }}
+            title="Select canvas instance"
+          >
+            <option value="">Default</option>
+            {canvasIds.map((cid) => (
+              <option key={cid} value={cid}>{cid}</option>
+            ))}
+          </select>
+        )}
         <input
           type="text"
           value={searchQuery}

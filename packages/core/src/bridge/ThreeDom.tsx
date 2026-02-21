@@ -1,13 +1,14 @@
 import { useEffect, useRef } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
-import type { Scene } from 'three';
+import { Vector3 } from 'three';
+import type { Scene, Camera } from 'three';
 import { ObjectStore } from '../store/ObjectStore';
 import { DomMirror } from '../mirror/DomMirror';
 import { ensureCustomElements } from '../mirror/CustomElements';
 import { patchObject3D } from './patchObject3D';
 import { createSnapshot } from '../snapshot/snapshot';
 import { click3D, doubleClick3D, contextMenu3D } from '../interactions/click';
-import { hover3D } from '../interactions/hover';
+import { hover3D, unhover3D } from '../interactions/hover';
 import { drag3D } from '../interactions/drag';
 import { wheel3D } from '../interactions/wheel';
 import { pointerMiss3D } from '../interactions/pointerMiss';
@@ -20,13 +21,26 @@ import { RaycastAccelerator } from '../highlight/RaycastAccelerator';
 import { resolveSelectionDisplayTarget } from '../highlight/selectionDisplayTarget';
 import { version } from '../version';
 import { r3fLog, enableDebug } from '../debug';
-import type { R3FDOM, ObjectMetadata } from '../types';
+import type { R3FDOM, ObjectMetadata, CameraState } from '../types';
 
 // ---------------------------------------------------------------------------
 // ThreeDom Props
 // ---------------------------------------------------------------------------
 
 export interface ThreeDomProps {
+  /**
+   * Unique identifier for this canvas instance. Required when using multiple
+   * canvases. The bridge is registered in `window.__R3F_DOM_INSTANCES__[canvasId]`.
+   * When omitted the bridge is only set on `window.__R3F_DOM__`.
+   */
+  canvasId?: string;
+  /**
+   * Mark this canvas as the primary / default instance.
+   * `window.__R3F_DOM__` always points to the primary bridge.
+   * When only one canvas is used (no canvasId), it is implicitly primary.
+   * Default: true when canvasId is omitted, false otherwise.
+   */
+  primary?: boolean;
   /** CSS selector or HTMLElement for the mirror DOM root. Default: "#three-dom-root" */
   root?: string | HTMLElement;
   /** Objects to process per amortized batch per frame. Default: 500 */
@@ -46,28 +60,45 @@ export interface ThreeDomProps {
 }
 
 // ---------------------------------------------------------------------------
-// Singleton instances
+// Per-instance registries (keyed by canvasId, '' for default)
 // ---------------------------------------------------------------------------
 
-let _store: ObjectStore | null = null;
-let _mirror: DomMirror | null = null;
-let _selectionManager: SelectionManager | null = null;
-let _highlighter: Highlighter | null = null;
-let _inspectController: InspectController | null = null;
+const _stores = new Map<string, ObjectStore>();
+const _mirrors = new Map<string, DomMirror>();
+const _selectionManagers = new Map<string, SelectionManager>();
+const _highlighters = new Map<string, Highlighter>();
+const _inspectControllers = new Map<string, InspectController>();
 
-export function getStore(): ObjectStore | null { return _store; }
-export function getMirror(): DomMirror | null { return _mirror; }
-export function getSelectionManager(): SelectionManager | null { return _selectionManager; }
-export function getHighlighter(): Highlighter | null { return _highlighter; }
-export function getInspectController(): InspectController | null { return _inspectController; }
+/** Get the store for a canvas instance. Default: primary ('') instance. */
+export function getStore(canvasId = ''): ObjectStore | null { return _stores.get(canvasId) ?? null; }
+/** Get the mirror for a canvas instance. Default: primary ('') instance. */
+export function getMirror(canvasId = ''): DomMirror | null { return _mirrors.get(canvasId) ?? null; }
+/** Get the selection manager for a canvas instance. */
+export function getSelectionManager(canvasId = ''): SelectionManager | null { return _selectionManagers.get(canvasId) ?? null; }
+/** Get the highlighter for a canvas instance. */
+export function getHighlighter(canvasId = ''): Highlighter | null { return _highlighters.get(canvasId) ?? null; }
+/** Get the inspect controller for a canvas instance. */
+export function getInspectController(canvasId = ''): InspectController | null { return _inspectControllers.get(canvasId) ?? null; }
+/** List all active canvas IDs. */
+export function getCanvasIds(): string[] { return Array.from(_stores.keys()); }
 
 // ---------------------------------------------------------------------------
 // Global API exposure (window.__R3F_DOM__)
 // ---------------------------------------------------------------------------
 
-function exposeGlobalAPI(store: ObjectStore, gl: { domElement: HTMLCanvasElement; getContext(): unknown }): void {
+function exposeGlobalAPI(
+  store: ObjectStore,
+  gl: { domElement: HTMLCanvasElement; getContext(): unknown },
+  cameraRef: { current: Camera },
+  selMgr: SelectionManager | null,
+  inspCtrl: InspectController | null,
+  mirror: DomMirror | null,
+  canvasId?: string,
+  isPrimary = true,
+): void {
   const api: R3FDOM = {
     _ready: true,
+    canvasId,
     getByTestId: (id: string) => store.getByTestId(id),
     getByUuid: (uuid: string) => store.getByUuid(uuid),
     getByName: (name: string) => store.getByName(name),
@@ -93,6 +124,7 @@ function exposeGlobalAPI(store: ObjectStore, gl: { domElement: HTMLCanvasElement
     doubleClick: (idOrUuid: string) => { doubleClick3D(idOrUuid); },
     contextMenu: (idOrUuid: string) => { contextMenu3D(idOrUuid); },
     hover: (idOrUuid: string) => { hover3D(idOrUuid); },
+    unhover: () => { unhover3D(); },
     drag: async (idOrUuid: string, delta: { x: number; y: number; z: number }) => { await drag3D(idOrUuid, delta); },
     wheel: (idOrUuid: string, options?: { deltaY?: number; deltaX?: number }) => { wheel3D(idOrUuid, options); },
     pointerMiss: () => { pointerMiss3D(); },
@@ -102,12 +134,12 @@ function exposeGlobalAPI(store: ObjectStore, gl: { domElement: HTMLCanvasElement
     },
     select: (idOrUuid: string) => {
       const obj = store.getObject3D(idOrUuid);
-      if (obj && _selectionManager) _selectionManager.select(obj);
+      if (obj && selMgr) selMgr.select(obj);
     },
-    clearSelection: () => { _selectionManager?.clearSelection(); },
+    clearSelection: () => { selMgr?.clearSelection(); },
     getSelection: () =>
-      _selectionManager
-        ? _selectionManager.getSelected().map((o) => o.uuid)
+      selMgr
+        ? selMgr.getSelected().map((o: { uuid: string }) => o.uuid)
         : [],
     getObject3D: (idOrUuid: string) => store.getObject3D(idOrUuid),
     getSelectionDisplayTarget: (uuid: string) =>
@@ -115,9 +147,9 @@ function exposeGlobalAPI(store: ObjectStore, gl: { domElement: HTMLCanvasElement
     setInspectMode: (on: boolean) => {
       r3fLog('inspect', 'Global API setInspectMode called', { on });
       if (on) {
-        _inspectController?.enable();
+        inspCtrl?.enable();
       } else {
-        _inspectController?.disable();
+        inspCtrl?.disable();
       }
     },
     sweepOrphans: () => store.sweepOrphans(),
@@ -129,8 +161,8 @@ function exposeGlobalAPI(store: ObjectStore, gl: { domElement: HTMLCanvasElement
       groupCount: store.getCountByType('Group'),
       lightCount: store.getCountByType('DirectionalLight') + store.getCountByType('PointLight') + store.getCountByType('SpotLight') + store.getCountByType('AmbientLight') + store.getCountByType('HemisphereLight'),
       cameraCount: store.getCountByType('PerspectiveCamera') + store.getCountByType('OrthographicCamera'),
-      materializedDomNodes: _mirror?.getMaterializedCount() ?? 0,
-      maxDomNodes: _mirror?.getMaxNodes() ?? 0,
+      materializedDomNodes: mirror?.getMaterializedCount() ?? 0,
+      maxDomNodes: mirror?.getMaxNodes() ?? 0,
       canvasWidth: gl.domElement.width,
       canvasHeight: gl.domElement.height,
       webglRenderer: (() => {
@@ -142,6 +174,36 @@ function exposeGlobalAPI(store: ObjectStore, gl: { domElement: HTMLCanvasElement
       })(),
       dirtyQueueSize: store.getDirtyCount(),
     }),
+    getCameraState: (): CameraState => {
+      const cam = cameraRef.current;
+      const dir = new Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+      const target: [number, number, number] = [
+        cam.position.x + dir.x * 100,
+        cam.position.y + dir.y * 100,
+        cam.position.z + dir.z * 100,
+      ];
+      const state: CameraState = {
+        type: cam.type,
+        position: [cam.position.x, cam.position.y, cam.position.z],
+        rotation: [cam.rotation.x, cam.rotation.y, cam.rotation.z],
+        target,
+        near: (cam as unknown as { near: number }).near,
+        far: (cam as unknown as { far: number }).far,
+        zoom: (cam as unknown as { zoom: number }).zoom,
+      };
+      if (cam.type === 'PerspectiveCamera') {
+        const pc = cam as unknown as { fov: number; aspect: number };
+        state.fov = pc.fov;
+        state.aspect = pc.aspect;
+      } else if (cam.type === 'OrthographicCamera') {
+        const oc = cam as unknown as { left: number; right: number; top: number; bottom: number };
+        state.left = oc.left;
+        state.right = oc.right;
+        state.top = oc.top;
+        state.bottom = oc.bottom;
+      }
+      return state;
+    },
     fuzzyFind: (query: string, limit = 5) => {
       const q = query.toLowerCase();
       const results: ObjectMetadata[] = [];
@@ -159,11 +221,36 @@ function exposeGlobalAPI(store: ObjectStore, gl: { domElement: HTMLCanvasElement
     },
     version,
   };
-  window.__R3F_DOM__ = api;
+
+  if (isPrimary) {
+    window.__R3F_DOM__ = api;
+  }
+  if (canvasId) {
+    if (!window.__R3F_DOM_INSTANCES__) window.__R3F_DOM_INSTANCES__ = {};
+    if (window.__R3F_DOM_INSTANCES__[canvasId]) {
+      console.warn(
+        `[react-three-dom] Duplicate canvasId "${canvasId}" — the previous bridge instance will be overwritten. ` +
+        `Each <ThreeDom> must have a unique canvasId.`,
+      );
+    }
+    window.__R3F_DOM_INSTANCES__[canvasId] = api;
+  }
 }
 
-function removeGlobalAPI(onlyIfEquals?: R3FDOM): void {
+function removeGlobalAPI(onlyIfEquals?: R3FDOM, canvasId?: string): void {
   r3fLog('bridge', 'removeGlobalAPI called (deferred)');
+
+  const removeFromRegistry = (ref?: R3FDOM) => {
+    if (canvasId && window.__R3F_DOM_INSTANCES__) {
+      if (!ref || window.__R3F_DOM_INSTANCES__[canvasId] === ref) {
+        delete window.__R3F_DOM_INSTANCES__[canvasId];
+        if (Object.keys(window.__R3F_DOM_INSTANCES__).length === 0) {
+          delete (window as Window & { __R3F_DOM_INSTANCES__?: Record<string, R3FDOM> }).__R3F_DOM_INSTANCES__;
+        }
+      }
+    }
+  };
+
   if (onlyIfEquals !== undefined) {
     const ref = onlyIfEquals;
     queueMicrotask(() => {
@@ -173,9 +260,11 @@ function removeGlobalAPI(onlyIfEquals?: R3FDOM): void {
       } else {
         r3fLog('bridge', 'Global API not removed — replaced by new instance (Strict Mode remount)');
       }
+      removeFromRegistry(ref);
     });
   } else {
     delete (window as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+    removeFromRegistry();
     r3fLog('bridge', 'Global API removed (immediate)');
   }
 }
@@ -184,10 +273,11 @@ function removeGlobalAPI(onlyIfEquals?: R3FDOM): void {
 // Stub bridge for error / no-WebGL states
 // ---------------------------------------------------------------------------
 
-function createStubBridge(error?: string): R3FDOM {
+function createStubBridge(error?: string, canvasId?: string): R3FDOM {
   return {
     _ready: false,
     _error: error,
+    canvasId,
     getByTestId: () => null,
     getByUuid: () => null,
     getByName: () => [],
@@ -217,6 +307,7 @@ function createStubBridge(error?: string): R3FDOM {
     doubleClick: () => {},
     contextMenu: () => {},
     hover: () => {},
+    unhover: () => {},
     drag: async () => {},
     wheel: () => {},
     pointerMiss: () => {},
@@ -244,6 +335,15 @@ function createStubBridge(error?: string): R3FDOM {
       webglRenderer: 'unavailable',
       dirtyQueueSize: 0,
     }),
+    getCameraState: () => ({
+      type: 'unknown',
+      position: [0, 0, 0] as [number, number, number],
+      rotation: [0, 0, 0] as [number, number, number],
+      target: [0, 0, -100] as [number, number, number],
+      near: 0.1,
+      far: 1000,
+      zoom: 1,
+    }),
     fuzzyFind: () => [],
     version,
   };
@@ -254,6 +354,8 @@ function createStubBridge(error?: string): R3FDOM {
 // ---------------------------------------------------------------------------
 
 export function ThreeDom({
+  canvasId,
+  primary,
   root = '#three-dom-root',
   batchSize = 500,
   syncBudgetMs = 0.5,
@@ -263,12 +365,16 @@ export function ThreeDom({
   debug = false,
   inspect: inspectProp = false,
 }: ThreeDomProps = {}) {
+  const isPrimary = primary ?? (canvasId === undefined);
+  const instanceKey = canvasId ?? '';
   const scene = useThree((s) => s.scene);
   const camera = useThree((s) => s.camera);
   const gl = useThree((s) => s.gl);
   const size = useThree((s) => s.size);
   const cursorRef = useRef(0);
   const lastSweepRef = useRef(0);
+  const cameraRef = useRef(camera);
+  cameraRef.current = camera;
 
   // -----------------------------------------------------------------------
   // Setup
@@ -281,7 +387,7 @@ export function ThreeDom({
     r3fLog('setup', 'ThreeDom effect started', { enabled, debug, root, maxDomNodes });
 
     const canvas = gl.domElement;
-    canvas.setAttribute('data-r3f-canvas', 'true');
+    canvas.setAttribute('data-r3f-canvas', canvasId ?? 'true');
     const canvasParent = canvas.parentElement!;
 
     // ---- Create / resolve root element ----
@@ -321,11 +427,15 @@ export function ThreeDom({
       if (!webglContext || (webglContext as WebGLRenderingContext).isContextLost?.()) {
         const msg =
           'WebGL context not available. For headless Chromium, add --enable-webgl and optionally --use-gl=angle --use-angle=swiftshader-webgl to launch args.';
-        const stubApi = createStubBridge(msg);
-        window.__R3F_DOM__ = stubApi;
+        const stubApi = createStubBridge(msg, canvasId);
+        if (isPrimary) window.__R3F_DOM__ = stubApi;
+        if (canvasId) {
+          if (!window.__R3F_DOM_INSTANCES__) window.__R3F_DOM_INSTANCES__ = {};
+          window.__R3F_DOM_INSTANCES__[canvasId] = stubApi;
+        }
         r3fLog('setup', msg);
         return () => {
-          removeGlobalAPI(stubApi);
+          removeGlobalAPI(stubApi, canvasId);
           canvas.removeAttribute('data-r3f-canvas');
           if (createdRoot && rootElement?.parentNode) {
             rootElement.parentNode.removeChild(rootElement);
@@ -348,12 +458,24 @@ export function ThreeDom({
       setInteractionState(store, camera, gl, size);
       r3fLog('setup', 'Object3D patched, interaction state set');
 
-      // Register the scene root synchronously (so it's immediately available)
-      // then register the rest of the tree asynchronously to avoid blocking.
-      store.register(scene);
+      // Register the full tree synchronously first so that materializeSubtree
+      // can resolve children. Then kick off async registration for any objects
+      // added later (caught by the Object3D.add patch).
+      store.registerTree(scene);
+
+      // R3F's default camera lives outside the scene graph (managed by the
+      // fiber store, not added as a scene child). Register it explicitly so
+      // it appears as <three-camera> in the DOM and DevTools, nested under
+      // the scene element.
+      if (!store.has(camera)) {
+        const camMeta = store.register(camera);
+        camMeta.parentUuid = scene.uuid;
+        mirror.materialize(camera.uuid);
+      }
+
       mirror.materializeSubtree(scene.uuid, initialDepth);
       cancelAsyncReg = store.registerTreeAsync(scene);
-      r3fLog('setup', `Async registration started for scene tree`);
+      r3fLog('setup', `Scene registered: ${store.getCount()} objects, async watcher started`);
 
       // ---- Selection, highlighting, and inspect controller ----
       selectionManager = new SelectionManager();
@@ -371,15 +493,17 @@ export function ThreeDom({
         store,
       });
 
-      _selectionManager = selectionManager;
-      _highlighter = highlighter;
-      _inspectController = inspectController;
+      _selectionManagers.set(instanceKey, selectionManager);
+      _highlighters.set(instanceKey, highlighter);
+      _inspectControllers.set(instanceKey, inspectController);
 
-      exposeGlobalAPI(store, gl);
-      r3fLog('bridge', 'exposeGlobalAPI called — bridge is live, _ready=true');
-      currentApi = window.__R3F_DOM__;
-      _store = store;
-      _mirror = mirror;
+      exposeGlobalAPI(store, gl, cameraRef, selectionManager, inspectController, mirror, canvasId, isPrimary);
+      r3fLog('bridge', `exposeGlobalAPI called — bridge is live, _ready=true${canvasId ? `, canvasId="${canvasId}"` : ''}`);
+      currentApi = canvasId
+        ? window.__R3F_DOM_INSTANCES__?.[canvasId]
+        : window.__R3F_DOM__;
+      _stores.set(instanceKey, store);
+      _mirrors.set(instanceKey, mirror);
 
       if (inspectProp) {
         inspectController.enable();
@@ -403,8 +527,13 @@ export function ThreeDom({
       const errorMsg = err instanceof Error ? err.message : String(err);
       r3fLog('setup', 'ThreeDom setup failed', err);
       console.error('[react-three-dom] Setup failed:', err);
-      window.__R3F_DOM__ = createStubBridge(errorMsg);
-      currentApi = window.__R3F_DOM__;
+      const stubApi = createStubBridge(errorMsg, canvasId);
+      if (isPrimary) window.__R3F_DOM__ = stubApi;
+      if (canvasId) {
+        if (!window.__R3F_DOM_INSTANCES__) window.__R3F_DOM_INSTANCES__ = {};
+        window.__R3F_DOM_INSTANCES__[canvasId] = stubApi;
+      }
+      currentApi = stubApi;
     }
 
     // ---- Cleanup ----
@@ -415,7 +544,7 @@ export function ThreeDom({
       if (raycastAccelerator) raycastAccelerator.dispose();
       if (highlighter) highlighter.dispose();
       if (unpatch) unpatch();
-      removeGlobalAPI(currentApi);
+      removeGlobalAPI(currentApi, canvasId);
       clearInteractionState();
       if (selectionManager) selectionManager.dispose();
       if (mirror) mirror.dispose();
@@ -424,21 +553,26 @@ export function ThreeDom({
       if (createdRoot && rootElement?.parentNode) {
         rootElement.parentNode.removeChild(rootElement);
       }
-      _store = null;
-      _mirror = null;
-      _selectionManager = null;
-      _highlighter = null;
-      _inspectController = null;
+      _stores.delete(instanceKey);
+      _mirrors.delete(instanceKey);
+      _selectionManagers.delete(instanceKey);
+      _highlighters.delete(instanceKey);
+      _inspectControllers.delete(instanceKey);
       if (debug) enableDebug(false);
       r3fLog('setup', 'ThreeDom cleanup complete');
     };
-  }, [scene, camera, gl, size, enabled, root, maxDomNodes, initialDepth, debug, inspectProp]);
+  }, [scene, camera, gl, size, enabled, root, maxDomNodes, initialDepth, debug, inspectProp, canvasId, isPrimary, instanceKey]);
 
   // -----------------------------------------------------------------------
   // Per-frame sync
   // -----------------------------------------------------------------------
 
   useFrame(() => {
+    const _store = _stores.get(instanceKey);
+    const _mirror = _mirrors.get(instanceKey);
+    const _highlighter = _highlighters.get(instanceKey);
+    const _inspectController = _inspectControllers.get(instanceKey);
+
     if (!enabled || !_store || !_mirror) return;
 
     try {

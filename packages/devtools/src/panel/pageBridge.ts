@@ -43,6 +43,10 @@ export type ObjectMetadata = {
   vertexCount?: number;
   triangleCount?: number;
   instanceCount?: number;
+  fov?: number;
+  near?: number;
+  far?: number;
+  zoom?: number;
 };
 
 export type GeometryInspection = {
@@ -87,45 +91,73 @@ function evalInPage<T>(expression: string): Promise<T> {
   });
 }
 
+/** Currently targeted canvas ID. null = default bridge. */
+let _targetCanvasId: string | null = null;
+
+/** Set the target canvas ID for all subsequent bridge calls. */
+export function setTargetCanvas(canvasId: string | null): void {
+  _targetCanvasId = canvasId;
+}
+
+/** Get the current target canvas ID. */
+export function getTargetCanvas(): string | null {
+  return _targetCanvasId;
+}
+
+/** Build JS expression to resolve the bridge API for the current target canvas. */
+function apiExpr(): string {
+  if (_targetCanvasId) {
+    return `(window.__R3F_DOM_INSTANCES__ && window.__R3F_DOM_INSTANCES__[${JSON.stringify(_targetCanvasId)}])`;
+  }
+  return 'window.__R3F_DOM__';
+}
+
+/** List all active canvas IDs from the page's __R3F_DOM_INSTANCES__. */
+export function getCanvasIds(): Promise<string[]> {
+  return evalInPage<string>(
+    "JSON.stringify(window.__R3F_DOM_INSTANCES__ ? Object.keys(window.__R3F_DOM_INSTANCES__) : [])"
+  ).then((json) => json ? JSON.parse(json) : []).catch(() => []);
+}
+
 /** Check if the page has the R3F DOM bridge and is ready. */
 export function checkBridgeReady(): Promise<boolean> {
   return evalInPage<boolean>(
-    "typeof window.__R3F_DOM__ !== 'undefined' && window.__R3F_DOM__._ready === true"
+    `(function(){ var api = ${apiExpr()}; return typeof api !== 'undefined' && api !== null && api._ready === true; })()`
   ).catch(() => false);
 }
 
 /** Get full scene snapshot (tree). */
 export function getSnapshot(): Promise<SceneSnapshot | null> {
   return evalInPage<string>(
-    "JSON.stringify(typeof window.__R3F_DOM__ !== 'undefined' && window.__R3F_DOM__._ready ? window.__R3F_DOM__.snapshot() : null)"
+    `(function(){ var api = ${apiExpr()}; return JSON.stringify(api && api._ready ? api.snapshot() : null); })()`
   ).then((json) => (json ? JSON.parse(json) : null));
 }
 
 /** Get selected object uuids. */
 export function getSelection(): Promise<string[]> {
   return evalInPage<string>(
-    "JSON.stringify(typeof window.__R3F_DOM__ !== 'undefined' && window.__R3F_DOM__.getSelection ? window.__R3F_DOM__.getSelection() : [])"
+    `(function(){ var api = ${apiExpr()}; return JSON.stringify(api && api.getSelection ? api.getSelection() : []); })()`
   ).then((json) => (json ? JSON.parse(json) : []));
 }
 
 /** Select an object in the scene (highlight). */
 export function select(uuid: string): Promise<void> {
   return evalInPage(
-    `(function(){ if(window.__R3F_DOM__ && window.__R3F_DOM__.select) window.__R3F_DOM__.select(${JSON.stringify(uuid)}); })()`
+    `(function(){ var api = ${apiExpr()}; if(api && api.select) api.select(${JSON.stringify(uuid)}); })()`
   ).then(() => undefined);
 }
 
 /** Get Tier 2 inspection for an object. */
 export function inspect(uuid: string): Promise<ObjectInspection | null> {
   return evalInPage<string>(
-    `JSON.stringify(typeof window.__R3F_DOM__ !== 'undefined' && window.__R3F_DOM__.inspect ? window.__R3F_DOM__.inspect(${JSON.stringify(uuid)}) : null)`
+    `(function(){ var api = ${apiExpr()}; return JSON.stringify(api && api.inspect ? api.inspect(${JSON.stringify(uuid)}) : null); })()`
   ).then((json) => (json ? JSON.parse(json) : null));
 }
 
 /** Enable or disable "inspect mode" so the Elements panel picker can select 3D mirror nodes on the canvas. */
 export function setInspectMode(on: boolean): Promise<void> {
   return evalInPage(
-    `(function(){ if(window.__R3F_DOM__ && window.__R3F_DOM__.setInspectMode) window.__R3F_DOM__.setInspectMode(${on}); })()`
+    `(function(){ var api = ${apiExpr()}; if(api && api.setInspectMode) api.setInspectMode(${on}); })()`
   ).then(() => undefined);
 }
 

@@ -12,10 +12,12 @@ export {
   doubleClick,
   contextMenu,
   hover,
+  unhover,
   drag,
   wheel,
   pointerMiss,
   drawPathOnCanvas,
+  getCameraState,
 } from './interactions';
 
 // Path generators for drawPath
@@ -47,4 +49,5 @@ export type {
   InspectOptions,
   SceneSnapshot,
   SnapshotNode,
+  CameraState,
 } from './types';

@@ -29,6 +29,7 @@ export type {
   StoreEventType,
   StoreListener,
   R3FDOM,
+  CameraState,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -62,6 +63,7 @@ export {
   getSelectionManager,
   getHighlighter,
   getInspectController,
+  getCanvasIds,
   type ThreeDomProps,
 } from './bridge/ThreeDom';
 export { patchObject3D, restoreObject3D, isPatched } from './bridge/patchObject3D';

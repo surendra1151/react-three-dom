@@ -28,17 +28,22 @@ export interface R3FFixtureOptions {
    * failure context automatically. Default: true.
    */
   report?: boolean;
+  /** Target a specific canvas by its canvasId. When omitted, uses the default bridge. */
+  canvasId?: string;
 }
 
 export class R3FFixture {
   private _debugListenerAttached = false;
   private readonly _reporter: R3FReporter;
+  /** Canvas ID for multi-canvas apps. Undefined = default bridge. */
+  readonly canvasId?: string;
 
   constructor(
     private readonly _page: Page,
     opts?: R3FFixtureOptions,
   ) {
-    this._reporter = new R3FReporter(_page, opts?.report !== false);
+    this.canvasId = opts?.canvasId;
+    this._reporter = new R3FReporter(_page, opts?.report !== false, this.canvasId);
     if (opts?.debug) {
       this._attachDebugListener();
     }
@@ -52,6 +57,38 @@ export class R3FFixture {
   /** Access the reporter for custom diagnostic logging. */
   get reporter(): R3FReporter {
     return this._reporter;
+  }
+
+  /**
+   * Create a scoped fixture targeting a specific canvas instance.
+   * All queries, interactions, and assertions on the returned fixture
+   * will use `window.__R3F_DOM_INSTANCES__[canvasId]` instead of
+   * `window.__R3F_DOM__`.
+   *
+   * @example
+   * ```typescript
+   * const mainR3f = r3f.forCanvas('main-viewport');
+   * const minimapR3f = r3f.forCanvas('minimap');
+   * await mainR3f.click('building-42');
+   * await expect(minimapR3f).toExist('building-42-marker');
+   * ```
+   */
+  forCanvas(canvasId: string): R3FFixture {
+    return new R3FFixture(this._page, {
+      canvasId,
+      report: this._reporter !== null,
+    });
+  }
+
+  /**
+   * List all active canvas IDs registered on the page.
+   * Returns an empty array if only the default (unnamed) bridge is active.
+   */
+  async getCanvasIds(): Promise<string[]> {
+    return this._page.evaluate(() => {
+      const instances = window.__R3F_DOM_INSTANCES__;
+      return instances ? Object.keys(instances) : [];
+    });
   }
 
   // -----------------------------------------------------------------------
@@ -89,62 +126,62 @@ export class R3FFixture {
 
   /** Get object metadata by testId or uuid. Returns null if not found. */
   async getObject(idOrUuid: string): Promise<ObjectMetadata | null> {
-    return this._page.evaluate((id) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(([id, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       if (!api) return null;
       return api.getByTestId(id) ?? api.getByUuid(id) ?? null;
-    }, idOrUuid);
+    }, [idOrUuid, this.canvasId ?? null] as const);
   }
 
   /** Get object metadata by testId (userData.testId). Returns null if not found. */
   async getByTestId(testId: string): Promise<ObjectMetadata | null> {
-    return this._page.evaluate((id) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(([id, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       return api ? api.getByTestId(id) : null;
-    }, testId);
+    }, [testId, this.canvasId ?? null] as const);
   }
 
   /** Get object metadata by UUID. Returns null if not found. */
   async getByUuid(uuid: string): Promise<ObjectMetadata | null> {
-    return this._page.evaluate((u) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(([u, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       return api ? api.getByUuid(u) : null;
-    }, uuid);
+    }, [uuid, this.canvasId ?? null] as const);
   }
 
   /** Get all objects with the given name (names are not unique in Three.js). */
   async getByName(name: string): Promise<ObjectMetadata[]> {
-    return this._page.evaluate((n) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(([n, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       return api ? api.getByName(n) : [];
-    }, name);
+    }, [name, this.canvasId ?? null] as const);
   }
 
   /** Get direct children of an object by testId or uuid. */
   async getChildren(idOrUuid: string): Promise<ObjectMetadata[]> {
-    return this._page.evaluate((id) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(([id, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       return api ? api.getChildren(id) : [];
-    }, idOrUuid);
+    }, [idOrUuid, this.canvasId ?? null] as const);
   }
 
   /** Get parent of an object by testId or uuid. Returns null if root or not found. */
   async getParent(idOrUuid: string): Promise<ObjectMetadata | null> {
-    return this._page.evaluate((id) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(([id, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       return api ? api.getParent(id) : null;
-    }, idOrUuid);
+    }, [idOrUuid, this.canvasId ?? null] as const);
   }
 
   /** Get heavy inspection data (Tier 2) by testId or uuid. Pass { includeGeometryData: true } to include vertex positions and triangle indices. */
   async inspect(idOrUuid: string, options?: { includeGeometryData?: boolean }): Promise<ObjectInspection | null> {
     return this._page.evaluate(
-      ({ id, opts }: { id: string; opts?: { includeGeometryData?: boolean } }) => {
-        const api = window.__R3F_DOM__;
+      ({ id, opts, cid }: { id: string; opts?: { includeGeometryData?: boolean }; cid: string | null }) => {
+        const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
         if (!api) return null;
         return api.inspect(id, opts);
       },
-      { id: idOrUuid, opts: options },
+      { id: idOrUuid, opts: options, cid: this.canvasId ?? null },
     );
   }
 
@@ -153,22 +190,22 @@ export class R3FFixture {
    * Use for nested objects where local position differs from world position.
    */
   async getWorldPosition(idOrUuid: string): Promise<[number, number, number] | null> {
-    return this._page.evaluate((id) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(([id, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       if (!api) return null;
       const insp = api.inspect(id);
       if (!insp?.worldMatrix || insp.worldMatrix.length < 15) return null;
       const m = insp.worldMatrix;
       return [m[12], m[13], m[14]];
-    }, idOrUuid);
+    }, [idOrUuid, this.canvasId ?? null] as const);
   }
 
   /** Take a full scene snapshot. */
   async snapshot(): Promise<SceneSnapshot | null> {
-    return this._page.evaluate(() => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate((cid) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       return api ? api.snapshot() : null;
-    });
+    }, this.canvasId ?? null);
   }
 
   /**
@@ -197,101 +234,87 @@ export class R3FFixture {
 
   /** Get the total number of tracked objects. */
   async getCount(): Promise<number> {
-    return this._page.evaluate(() => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate((cid) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       return api ? api.getCount() : 0;
-    });
+    }, this.canvasId ?? null);
   }
 
   /**
    * Return a Playwright locator for the R3F canvas element the bridge is attached to.
-   * Use for canvas-level actions (e.g. click at a position, screenshot the canvas).
-   * The canvas has `data-r3f-canvas="true"` set by the bridge.
+   * The canvas has `data-r3f-canvas` set by the bridge (value is the canvasId or "true").
    */
   getCanvasLocator(): Locator {
+    if (this.canvasId) {
+      return this._page.locator(`[data-r3f-canvas="${this.canvasId}"]`);
+    }
     return this._page.locator('[data-r3f-canvas]');
   }
 
   /**
    * Get all objects of a given Three.js type (e.g. "Mesh", "Group", "Line").
-   * Useful for BIM/CAD apps to find all walls, doors, etc. by object type.
    */
   async getByType(type: string): Promise<ObjectMetadata[]> {
-    return this._page.evaluate((t) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(([t, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       return api ? api.getByType(t) : [];
-    }, type);
+    }, [type, this.canvasId ?? null] as const);
   }
 
   /**
    * Get all objects with a given geometry type (e.g. "BoxGeometry", "BufferGeometry").
-   * Only meshes/points/lines have geometryType.
    */
   async getByGeometryType(type: string): Promise<ObjectMetadata[]> {
-    return this._page.evaluate((t) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(([t, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       return api ? api.getByGeometryType(t) : [];
-    }, type);
+    }, [type, this.canvasId ?? null] as const);
   }
 
   /**
    * Get all objects with a given material type (e.g. "MeshStandardMaterial").
-   * Only meshes/points/lines have materialType.
    */
   async getByMaterialType(type: string): Promise<ObjectMetadata[]> {
-    return this._page.evaluate((t) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(([t, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       return api ? api.getByMaterialType(t) : [];
-    }, type);
+    }, [type, this.canvasId ?? null] as const);
   }
 
   /**
    * Get objects that have a specific userData key (and optionally matching value).
-   * Useful for BIM/CAD apps where objects are tagged with metadata like
-   * `userData.category = "wall"` or `userData.floorId = 2`.
    */
   async getByUserData(key: string, value?: unknown): Promise<ObjectMetadata[]> {
-    return this._page.evaluate(({ k, v }) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(({ k, v, cid }) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       return api ? api.getByUserData(k, v) : [];
-    }, { k: key, v: value });
+    }, { k: key, v: value, cid: this.canvasId ?? null });
   }
 
   /**
    * Count objects of a given Three.js type.
-   * More efficient than `getByType(type).then(arr => arr.length)`.
    */
   async getCountByType(type: string): Promise<number> {
-    return this._page.evaluate((t) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(([t, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       return api ? api.getCountByType(t) : 0;
-    }, type);
+    }, [type, this.canvasId ?? null] as const);
   }
 
   /**
    * Batch lookup: get metadata for multiple objects by testId or uuid in a
-   * single browser round-trip. Returns a record from id to metadata (or null).
-   *
-   * Much more efficient than calling `getObject()` in a loop for BIM/CAD
-   * scenes with many objects.
-   *
-   * @example
-   * ```typescript
-   * const results = await r3f.getObjects(['wall-1', 'door-2', 'window-3']);
-   * expect(results['wall-1']).not.toBeNull();
-   * expect(results['door-2']?.type).toBe('Mesh');
-   * ```
+   * single browser round-trip.
    */
   async getObjects(ids: string[]): Promise<Record<string, ObjectMetadata | null>> {
-    return this._page.evaluate((idList) => {
-      const api = window.__R3F_DOM__;
+    return this._page.evaluate(([idList, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       if (!api) {
         const result: Record<string, null> = {};
         for (const id of idList) result[id] = null;
         return result;
       }
       return api.getObjects(idList);
-    }, ids);
+    }, [ids, this.canvasId ?? null] as const);
   }
 
   /**
@@ -328,7 +351,7 @@ export class R3FFixture {
    * @param timeout  Optional auto-wait timeout in ms. Default: 5000
    */
   async click(idOrUuid: string, timeout?: number): Promise<void> {
-    return interactions.click(this._page, idOrUuid, timeout);
+    return interactions.click(this._page, idOrUuid, timeout, this.canvasId);
   }
 
   /**
@@ -336,7 +359,7 @@ export class R3FFixture {
    * Auto-waits for the object to exist.
    */
   async doubleClick(idOrUuid: string, timeout?: number): Promise<void> {
-    return interactions.doubleClick(this._page, idOrUuid, timeout);
+    return interactions.doubleClick(this._page, idOrUuid, timeout, this.canvasId);
   }
 
   /**
@@ -344,7 +367,7 @@ export class R3FFixture {
    * Auto-waits for the object to exist.
    */
   async contextMenu(idOrUuid: string, timeout?: number): Promise<void> {
-    return interactions.contextMenu(this._page, idOrUuid, timeout);
+    return interactions.contextMenu(this._page, idOrUuid, timeout, this.canvasId);
   }
 
   /**
@@ -352,7 +375,15 @@ export class R3FFixture {
    * Auto-waits for the object to exist.
    */
   async hover(idOrUuid: string, timeout?: number): Promise<void> {
-    return interactions.hover(this._page, idOrUuid, timeout);
+    return interactions.hover(this._page, idOrUuid, timeout, this.canvasId);
+  }
+
+  /**
+   * Unhover / pointer-leave — resets hover state by moving pointer off-canvas.
+   * Auto-waits for the bridge to be ready.
+   */
+  async unhover(timeout?: number): Promise<void> {
+    return interactions.unhover(this._page, timeout, this.canvasId);
   }
 
   /**
@@ -364,7 +395,7 @@ export class R3FFixture {
     delta: { x: number; y: number; z: number },
     timeout?: number,
   ): Promise<void> {
-    return interactions.drag(this._page, idOrUuid, delta, timeout);
+    return interactions.drag(this._page, idOrUuid, delta, timeout, this.canvasId);
   }
 
   /**
@@ -376,7 +407,7 @@ export class R3FFixture {
     options?: { deltaY?: number; deltaX?: number },
     timeout?: number,
   ): Promise<void> {
-    return interactions.wheel(this._page, idOrUuid, options, timeout);
+    return interactions.wheel(this._page, idOrUuid, options, timeout, this.canvasId);
   }
 
   /**
@@ -384,7 +415,7 @@ export class R3FFixture {
    * Auto-waits for the bridge to be ready.
    */
   async pointerMiss(timeout?: number): Promise<void> {
-    return interactions.pointerMiss(this._page, timeout);
+    return interactions.pointerMiss(this._page, timeout, this.canvasId);
   }
 
   /**
@@ -402,7 +433,19 @@ export class R3FFixture {
     options?: { stepDelayMs?: number; pointerType?: 'mouse' | 'pen' | 'touch'; clickAtEnd?: boolean },
     timeout?: number,
   ): Promise<{ eventCount: number; pointCount: number }> {
-    return interactions.drawPathOnCanvas(this._page, points, options, timeout);
+    return interactions.drawPathOnCanvas(this._page, points, options, timeout, this.canvasId);
+  }
+
+  // -----------------------------------------------------------------------
+  // Camera
+  // -----------------------------------------------------------------------
+
+  /**
+   * Get the current camera state (position, rotation, fov, near, far, zoom, target).
+   * Auto-waits for the bridge to be ready.
+   */
+  async getCameraState(timeout?: number) {
+    return interactions.getCameraState(this._page, timeout, this.canvasId);
   }
 
   // -----------------------------------------------------------------------
@@ -417,7 +460,7 @@ export class R3FFixture {
   async waitForSceneReady(options?: WaitForSceneReadyOptions): Promise<void> {
     this._reporter.logBridgeWaiting();
     try {
-      await waitForSceneReady(this._page, options);
+      await waitForSceneReady(this._page, { ...options, canvasId: this.canvasId });
       const diag = await this._reporter.fetchDiagnostics();
       if (diag) {
         this._reporter.logBridgeConnected(diag);
@@ -441,7 +484,7 @@ export class R3FFixture {
   ): Promise<void> {
     this._reporter.logBridgeWaiting();
     try {
-      await waitForObject(this._page, idOrUuid, options);
+      await waitForObject(this._page, idOrUuid, { ...options, canvasId: this.canvasId });
       const meta = await this.getObject(idOrUuid);
       if (meta) {
         this._reporter.logObjectFound(idOrUuid, meta.type, meta.name || undefined);
@@ -458,7 +501,7 @@ export class R3FFixture {
    * animation frames. Useful after triggering interactions or animations.
    */
   async waitForIdle(options?: WaitForIdleOptions): Promise<void> {
-    return waitForIdle(this._page, options);
+    return waitForIdle(this._page, { ...options, canvasId: this.canvasId });
   }
 
   /**
@@ -470,7 +513,7 @@ export class R3FFixture {
    * @returns        Metadata of the newly added object(s)
    */
   async waitForNewObject(options?: WaitForNewObjectOptions): Promise<WaitForNewObjectResult> {
-    return waitForNewObject(this._page, options);
+    return waitForNewObject(this._page, { ...options, canvasId: this.canvasId });
   }
 
   /**
@@ -481,7 +524,7 @@ export class R3FFixture {
     idOrUuid: string,
     options?: WaitForObjectRemovedOptions,
   ): Promise<void> {
-    return waitForObjectRemoved(this._page, idOrUuid, options);
+    return waitForObjectRemoved(this._page, idOrUuid, { ...options, canvasId: this.canvasId });
   }
 
   // -----------------------------------------------------------------------
@@ -490,19 +533,19 @@ export class R3FFixture {
 
   /** Select a 3D object by testId or uuid (highlights in scene). */
   async select(idOrUuid: string): Promise<void> {
-    await this._page.evaluate((id) => {
-      const api = window.__R3F_DOM__;
+    await this._page.evaluate(([id, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       if (!api) throw new Error('react-three-dom bridge not found');
       api.select(id);
-    }, idOrUuid);
+    }, [idOrUuid, this.canvasId ?? null] as const);
   }
 
   /** Clear the current selection. */
   async clearSelection(): Promise<void> {
-    await this._page.evaluate(() => {
-      const api = window.__R3F_DOM__;
+    await this._page.evaluate((cid) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       if (api) api.clearSelection();
-    });
+    }, this.canvasId ?? null);
   }
 
   // -----------------------------------------------------------------------

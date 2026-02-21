@@ -5,14 +5,26 @@ import { R3FReporter } from './reporter';
 import { _setReporter, _getReporter } from './reporterState';
 
 // ---------------------------------------------------------------------------
+// Multi-canvas support — active canvas ID
+// ---------------------------------------------------------------------------
+
+let _activeCanvasId: string | null = null;
+
+/** @internal Get the currently active canvas ID. */
+export function _getActiveCanvasId(): string | null { return _activeCanvasId; }
+
+// ---------------------------------------------------------------------------
 // Bridge access helpers
 // ---------------------------------------------------------------------------
 
 function getR3F(win: Cypress.AUTWindow): R3FDOM {
-  const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+  const w = win as Window & { __R3F_DOM__?: R3FDOM; __R3F_DOM_INSTANCES__?: Record<string, R3FDOM> };
+  const api = _activeCanvasId
+    ? w.__R3F_DOM_INSTANCES__?.[_activeCanvasId]
+    : w.__R3F_DOM__;
   if (!api) {
     throw new Error(
-      'react-three-dom bridge not found. Is <ThreeDom> mounted in your app?',
+      `react-three-dom bridge not found${_activeCanvasId ? ` (canvas: "${_activeCanvasId}")` : ''}. Is <ThreeDom${_activeCanvasId ? ` canvasId="${_activeCanvasId}"` : ''}> mounted in your app?`,
     );
   }
   return api;
@@ -25,12 +37,19 @@ function getR3F(win: Cypress.AUTWindow): R3FDOM {
 const AUTO_WAIT_TIMEOUT = 5_000;
 const AUTO_WAIT_POLL_MS = 100;
 
+function resolveApi(win: Cypress.AUTWindow): R3FDOM | undefined {
+  const w = win as Window & { __R3F_DOM__?: R3FDOM; __R3F_DOM_INSTANCES__?: Record<string, R3FDOM> };
+  return _activeCanvasId
+    ? w.__R3F_DOM_INSTANCES__?.[_activeCanvasId]
+    : w.__R3F_DOM__;
+}
+
 function autoWaitForBridge(timeout = AUTO_WAIT_TIMEOUT): Cypress.Chainable<R3FDOM> {
   const deadline = Date.now() + timeout;
 
   function poll(): Cypress.Chainable<R3FDOM> {
     return cy.window({ log: false }).then((win) => {
-      const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+      const api = resolveApi(win);
 
       if (api && api._ready) return api;
 
@@ -42,8 +61,8 @@ function autoWaitForBridge(timeout = AUTO_WAIT_TIMEOUT): Cypress.Chainable<R3FDO
 
       if (Date.now() > deadline) {
         throw new Error(
-          `[react-three-dom] Auto-wait timed out after ${timeout}ms: bridge not ready.\n` +
-          `Ensure <ThreeDom> is mounted inside your <Canvas> component.`,
+          `[react-three-dom] Auto-wait timed out after ${timeout}ms: bridge not ready${_activeCanvasId ? ` (canvas: "${_activeCanvasId}")` : ''}.\n` +
+          `Ensure <ThreeDom${_activeCanvasId ? ` canvasId="${_activeCanvasId}"` : ''}> is mounted inside your <Canvas> component.`,
         );
       }
 
@@ -62,12 +81,12 @@ function autoWaitForObject(
 
   function poll(): Cypress.Chainable<R3FDOM> {
     return cy.window({ log: false }).then((win) => {
-      const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+      const api = resolveApi(win);
 
       if (!api) {
         if (Date.now() > deadline) {
           throw new Error(
-            `[react-three-dom] Auto-wait timed out after ${timeout}ms: bridge not found.`,
+            `[react-three-dom] Auto-wait timed out after ${timeout}ms: bridge not found${_activeCanvasId ? ` (canvas: "${_activeCanvasId}")` : ''}.`,
           );
         }
         return cy.wait(AUTO_WAIT_POLL_MS, { log: false }).then(() => poll());
@@ -86,7 +105,7 @@ function autoWaitForObject(
 
       if (Date.now() > deadline) {
         let msg =
-          `[react-three-dom] Auto-wait timed out after ${timeout}ms: object "${idOrUuid}" not found.\n` +
+          `[react-three-dom] Auto-wait timed out after ${timeout}ms: object "${idOrUuid}" not found${_activeCanvasId ? ` (canvas: "${_activeCanvasId}")` : ''}.\n` +
           `Bridge: ready=${api._ready}, objectCount=${api.getCount()}.\n` +
           `Ensure the object has userData.testId="${idOrUuid}" or uuid="${idOrUuid}".`;
 
@@ -139,6 +158,22 @@ function formatCypressSceneTree(node: SnapshotNode, prefix = '', isLast = true):
 // ---------------------------------------------------------------------------
 
 export function registerCommands(): void {
+  // ---- Multi-canvas ----
+  Cypress.Commands.add('r3fUseCanvas', (canvasId: string | null) => {
+    _activeCanvasId = canvasId;
+    Cypress.log({
+      name: 'r3fUseCanvas',
+      message: canvasId ? `Switched to canvas "${canvasId}"` : 'Switched to default canvas',
+    });
+  });
+
+  Cypress.Commands.add('r3fGetCanvasIds', () => {
+    return cy.window({ log: false }).then((win) => {
+      const instances = (win as Window & { __R3F_DOM_INSTANCES__?: Record<string, R3FDOM> }).__R3F_DOM_INSTANCES__;
+      return instances ? Object.keys(instances) : [];
+    });
+  });
+
   // ---- Reporter ----
   Cypress.Commands.add('r3fEnableReporter', (enabled = true) => {
     if (enabled) {
@@ -208,6 +243,16 @@ export function registerCommands(): void {
     return autoWaitForObject(idOrUuid).then((api) => {
       api.hover(idOrUuid);
       reporter?.logInteractionDone('hover', idOrUuid, Date.now() - t0);
+    });
+  });
+
+  Cypress.Commands.add('r3fUnhover', () => {
+    const reporter = _getReporter();
+    const t0 = Date.now();
+    reporter?.logInteraction('unhover', '(canvas)');
+    return autoWaitForBridge().then((api) => {
+      api.unhover();
+      reporter?.logInteractionDone('unhover', '(canvas)', Date.now() - t0);
     });
   });
 
@@ -451,6 +496,15 @@ export function registerCommands(): void {
       const api = getR3F(win);
       if (typeof api.fuzzyFind !== 'function') return [];
       return api.fuzzyFind(query, limit);
+    });
+  });
+
+  // ---- Camera ----
+
+  Cypress.Commands.add('r3fGetCameraState', () => {
+    return cy.window({ log: false }).then((win) => {
+      const api = getR3F(win);
+      return api.getCameraState();
     });
   });
 }

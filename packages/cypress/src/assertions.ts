@@ -1,5 +1,6 @@
 /// <reference types="cypress" />
 import type { R3FDOM, ObjectMetadata, ObjectInspection, SnapshotNode } from './types';
+import { _getActiveCanvasId } from './commands';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -7,10 +8,15 @@ import type { R3FDOM, ObjectMetadata, ObjectInspection, SnapshotNode } from './t
 
 function getR3FFromWindow(): R3FDOM {
   const win = (cy as unknown as { state: (key: string) => unknown })
-    .state('window') as unknown as Window & { __R3F_DOM__?: R3FDOM };
-  const api = win?.__R3F_DOM__;
+    .state('window') as unknown as Window & { __R3F_DOM__?: R3FDOM; __R3F_DOM_INSTANCES__?: Record<string, R3FDOM> };
+  const cid = _getActiveCanvasId();
+  const api = cid
+    ? win?.__R3F_DOM_INSTANCES__?.[cid]
+    : win?.__R3F_DOM__;
   if (!api) {
-    throw new Error('react-three-dom bridge not found. Is <ThreeDom> mounted?');
+    throw new Error(
+      `react-three-dom bridge not found${cid ? ` (canvas: "${cid}")` : ''}. Is <ThreeDom${cid ? ` canvasId="${cid}"` : ''}> mounted?`,
+    );
   }
   return api;
 }
@@ -470,5 +476,149 @@ export function registerAssertions(): void {
         `< ${max}`, actual,
       );
     });
+
+    // ===================== Camera assertions ===============================
+
+    Assertion.addMethod('r3fCameraPosition', function (
+      this: Chai.AssertionStatic,
+      expected: [number, number, number], tolerance = 0.1,
+    ) {
+      const api = getR3FFromWindow();
+      const cam = api.getCameraState();
+      const pass = expected.every((v, i) => Math.abs(cam.position[i] - v) <= tolerance);
+      (this as unknown as Chai.Assertion).assert(
+        pass,
+        `expected camera at [${expected}], got [${cam.position}] (tol=${tolerance})`,
+        `expected camera NOT at [${expected}]`,
+        expected, cam.position,
+      );
+    });
+
+    Assertion.addMethod('r3fCameraFov', function (
+      this: Chai.AssertionStatic, expected: number, tolerance = 0.1,
+    ) {
+      const api = getR3FFromWindow();
+      const cam = api.getCameraState();
+      const actual = cam.fov;
+      const pass = actual !== undefined && Math.abs(actual - expected) <= tolerance;
+      (this as unknown as Chai.Assertion).assert(
+        pass,
+        `expected camera fov ${expected}, got ${actual ?? 'N/A'} (tol=${tolerance})`,
+        `expected camera fov NOT ${expected}`,
+        expected, actual,
+      );
+    });
+
+    Assertion.addMethod('r3fCameraNear', function (
+      this: Chai.AssertionStatic, expected: number, tolerance = 0.01,
+    ) {
+      const api = getR3FFromWindow();
+      const cam = api.getCameraState();
+      const pass = Math.abs(cam.near - expected) <= tolerance;
+      (this as unknown as Chai.Assertion).assert(
+        pass,
+        `expected camera near ${expected}, got ${cam.near} (tol=${tolerance})`,
+        `expected camera near NOT ${expected}`,
+        expected, cam.near,
+      );
+    });
+
+    Assertion.addMethod('r3fCameraFar', function (
+      this: Chai.AssertionStatic, expected: number, tolerance = 1,
+    ) {
+      const api = getR3FFromWindow();
+      const cam = api.getCameraState();
+      const pass = Math.abs(cam.far - expected) <= tolerance;
+      (this as unknown as Chai.Assertion).assert(
+        pass,
+        `expected camera far ${expected}, got ${cam.far} (tol=${tolerance})`,
+        `expected camera far NOT ${expected}`,
+        expected, cam.far,
+      );
+    });
+
+    Assertion.addMethod('r3fCameraZoom', function (
+      this: Chai.AssertionStatic, expected: number, tolerance = 0.01,
+    ) {
+      const api = getR3FFromWindow();
+      const cam = api.getCameraState();
+      const pass = Math.abs(cam.zoom - expected) <= tolerance;
+      (this as unknown as Chai.Assertion).assert(
+        pass,
+        `expected camera zoom ${expected}, got ${cam.zoom} (tol=${tolerance})`,
+        `expected camera zoom NOT ${expected}`,
+        expected, cam.zoom,
+      );
+    });
+
+    // ===================== Batch assertions ================================
+
+    Assertion.addMethod('r3fAllExist', function (
+      this: Chai.AssertionStatic, idsOrPattern: string[] | string,
+    ) {
+      const api = getR3FFromWindow();
+      const ids = typeof idsOrPattern === 'string'
+        ? resolvePatternSync(api, idsOrPattern)
+        : idsOrPattern;
+      const missing = ids.filter((id) => resolveObject(api, id) === null);
+      (this as unknown as Chai.Assertion).assert(
+        missing.length === 0 && ids.length > 0,
+        `expected all objects to exist, missing: [${missing.join(', ')}]`,
+        `expected some objects to NOT exist, but all do`,
+        ids, { missing },
+      );
+    });
+
+    Assertion.addMethod('r3fAllVisible', function (
+      this: Chai.AssertionStatic, idsOrPattern: string[] | string,
+    ) {
+      const api = getR3FFromWindow();
+      const ids = typeof idsOrPattern === 'string'
+        ? resolvePatternSync(api, idsOrPattern)
+        : idsOrPattern;
+      const hidden = ids.filter((id) => {
+        const m = resolveObject(api, id);
+        return !m || !m.visible;
+      });
+      (this as unknown as Chai.Assertion).assert(
+        hidden.length === 0 && ids.length > 0,
+        `expected all objects to be visible, hidden/missing: [${hidden.join(', ')}]`,
+        `expected some objects to NOT be visible, but all are`,
+        ids, { hidden },
+      );
+    });
+
+    Assertion.addMethod('r3fNoneExist', function (
+      this: Chai.AssertionStatic, idsOrPattern: string[] | string,
+    ) {
+      const api = getR3FFromWindow();
+      const ids = typeof idsOrPattern === 'string'
+        ? resolvePatternSync(api, idsOrPattern)
+        : idsOrPattern;
+      const found = ids.filter((id) => resolveObject(api, id) !== null);
+      (this as unknown as Chai.Assertion).assert(
+        found.length === 0,
+        `expected no objects to exist, but found: [${found.join(', ')}]`,
+        `expected some objects to exist, but none do`,
+        ids, { found },
+      );
+    });
   });
+}
+
+// ---------------------------------------------------------------------------
+// Batch helper — resolve glob/wildcard patterns to matching testIds
+// ---------------------------------------------------------------------------
+
+function resolvePatternSync(api: R3FDOM, pattern: string): string[] {
+  const snap = api.snapshot();
+  const ids: string[] = [];
+  const regex = new RegExp('^' + pattern.replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+  function walk(node: SnapshotNode) {
+    const testId = (node as SnapshotNode & { testId?: string }).testId ?? node.name;
+    if (regex.test(testId) || regex.test(node.uuid)) ids.push(testId || node.uuid);
+    for (const child of node.children) walk(child);
+  }
+  walk(snap.tree);
+  return ids;
 }

@@ -15,13 +15,13 @@ import type { ObjectMetadata } from './types';
  *
  * @internal Used by all public waiter functions.
  */
-async function waitForReadyBridge(page: Page, timeout: number): Promise<void> {
+async function waitForReadyBridge(page: Page, timeout: number, canvasId?: string): Promise<void> {
   const deadline = Date.now() + timeout;
   const pollMs = 100;
 
   while (Date.now() < deadline) {
-    const state = await page.evaluate(() => {
-      const api = window.__R3F_DOM__;
+    const state = await page.evaluate((cid) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       if (!api) return { exists: false as const };
       return {
         exists: true as const,
@@ -29,14 +29,13 @@ async function waitForReadyBridge(page: Page, timeout: number): Promise<void> {
         error: api._error ?? null,
         count: api.getCount(),
       };
-    });
+    }, canvasId ?? null);
 
     if (state.exists && state.ready) {
-      return; // Bridge is ready
+      return;
     }
 
     if (state.exists && !state.ready && state.error) {
-      // Bridge exists but failed — fail fast with diagnostic
       throw new Error(
         `[react-three-dom] Bridge initialization failed: ${state.error}\n` +
         `The <ThreeDom> component mounted but threw during setup. ` +
@@ -44,16 +43,14 @@ async function waitForReadyBridge(page: Page, timeout: number): Promise<void> {
       );
     }
 
-    // Bridge doesn't exist yet, or exists but not ready (still initializing)
     await page.waitForTimeout(pollMs);
   }
 
-  // Final check before throwing
-  const finalState = await page.evaluate(() => {
-    const api = window.__R3F_DOM__;
+  const finalState = await page.evaluate((cid) => {
+    const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
     if (!api) return { exists: false, ready: false, error: null };
     return { exists: true, ready: api._ready, error: api._error ?? null };
-  });
+  }, canvasId ?? null);
 
   if (finalState.exists && finalState.error) {
     throw new Error(
@@ -91,24 +88,27 @@ export interface WaitForSceneReadyOptions {
  */
 export async function waitForSceneReady(
   page: Page,
-  options: WaitForSceneReadyOptions = {},
+  options: WaitForSceneReadyOptions & { canvasId?: string } = {},
 ): Promise<void> {
   const {
     stableChecks = 3,
     pollIntervalMs = 100,
     timeout = 10_000,
+    canvasId,
   } = options;
 
   const deadline = Date.now() + timeout;
 
-  // Wait for the bridge to exist AND be ready (or have an error)
-  await waitForReadyBridge(page, timeout);
+  await waitForReadyBridge(page, timeout, canvasId);
 
   let lastCount = -1;
   let stableRuns = 0;
 
   while (Date.now() < deadline) {
-    const count = await page.evaluate(() => window.__R3F_DOM__!.getCount());
+    const count = await page.evaluate((cid) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
+      return api!.getCount();
+    }, canvasId ?? null);
 
     if (count === lastCount && count > 0) {
       stableRuns++;
@@ -121,9 +121,8 @@ export async function waitForSceneReady(
     await page.waitForTimeout(pollIntervalMs);
   }
 
-  // On timeout, capture current bridge state for diagnostics
-  const state = await page.evaluate(() => {
-    const api = window.__R3F_DOM__;
+  const state = await page.evaluate((cid) => {
+    const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
     if (!api)
       return { bridgeFound: false as const, ready: false, error: null, objectCount: 0 };
     return {
@@ -132,7 +131,7 @@ export async function waitForSceneReady(
       error: api._error ?? null,
       objectCount: api.getCount(),
     };
-  });
+  }, canvasId ?? null);
 
   const stateLine = state.bridgeFound
     ? `Bridge found: yes, _ready: ${state.ready}, _error: ${state.error ?? 'none'}, objectCount: ${state.objectCount}`
@@ -169,35 +168,34 @@ export interface WaitForObjectOptions {
 export async function waitForObject(
   page: Page,
   idOrUuid: string,
-  options: WaitForObjectOptions = {},
+  options: WaitForObjectOptions & { canvasId?: string } = {},
 ): Promise<void> {
   const {
     bridgeTimeout = 30_000,
     objectTimeout = 40_000,
     pollIntervalMs = 200,
+    canvasId,
   } = options;
 
-  // Wait for bridge to be ready (with _ready === true), fail fast on _error
-  await waitForReadyBridge(page, bridgeTimeout);
+  await waitForReadyBridge(page, bridgeTimeout, canvasId);
 
   const deadline = Date.now() + objectTimeout;
   while (Date.now() < deadline) {
     const found = await page.evaluate(
-      (id) => {
-        const api = window.__R3F_DOM__;
+      ([id, cid]) => {
+        const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
         if (!api || !api._ready) return false;
         return (api.getByTestId(id) ?? api.getByUuid(id)) !== null;
       },
-      idOrUuid,
+      [idOrUuid, canvasId ?? null] as const,
     );
     if (found) return;
     await page.waitForTimeout(pollIntervalMs);
   }
 
-  // Build diagnostic with fuzzy suggestions
   const diagnostics = await page.evaluate(
-    (id) => {
-      const api = window.__R3F_DOM__;
+    ([id, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
       if (!api) return { bridgeExists: false, ready: false, count: 0, error: null, suggestions: [] as Array<{ testId?: string; name: string; uuid: string }> };
       const suggestions = typeof api.fuzzyFind === 'function'
         ? api.fuzzyFind(id, 5).map((m: { testId?: string; name: string; uuid: string }) => ({ testId: m.testId, name: m.name, uuid: m.uuid }))
@@ -210,7 +208,7 @@ export async function waitForObject(
         suggestions,
       };
     },
-    idOrUuid,
+    [idOrUuid, canvasId ?? null] as const,
   );
 
   let msg =
@@ -255,18 +253,18 @@ export interface WaitForIdleOptions {
  */
 export async function waitForIdle(
   page: Page,
-  options: WaitForIdleOptions = {},
+  options: WaitForIdleOptions & { canvasId?: string } = {},
 ): Promise<void> {
   const {
     idleFrames = 10,
     timeout = 10_000,
+    canvasId,
   } = options;
 
-  // Ensure bridge is ready before polling for idle
-  await waitForReadyBridge(page, timeout);
+  await waitForReadyBridge(page, timeout, canvasId);
 
   const settled = await page.evaluate(
-    ([frames, timeoutMs]) => {
+    ([frames, timeoutMs, cid]) => {
       return new Promise<boolean | string>((resolve) => {
         const deadline = Date.now() + timeoutMs;
         let lastJson = '';
@@ -278,9 +276,10 @@ export async function waitForIdle(
             return;
           }
 
-          const api = window.__R3F_DOM__;
+          const api = cid
+            ? (window as unknown as { __R3F_DOM_INSTANCES__?: Record<string, { _ready: boolean; _error?: string; snapshot(): { tree: unknown } }> }).__R3F_DOM_INSTANCES__?.[cid]
+            : (window as unknown as { __R3F_DOM__?: { _ready: boolean; _error?: string; snapshot(): { tree: unknown } } }).__R3F_DOM__;
           if (!api || !api._ready) {
-            // Bridge disappeared or became un-ready (e.g. unmount/remount)
             if (api && api._error) {
               resolve(`Bridge error: ${api._error}`);
               return;
@@ -309,7 +308,7 @@ export async function waitForIdle(
         requestAnimationFrame(check);
       });
     },
-    [idleFrames, timeout] as const,
+    [idleFrames, timeout, canvasId ?? null] as const,
   );
 
   if (typeof settled === 'string') {
@@ -381,18 +380,18 @@ export interface WaitForNewObjectResult {
  */
 export async function waitForNewObject(
   page: Page,
-  options: WaitForNewObjectOptions = {},
+  options: WaitForNewObjectOptions & { canvasId?: string } = {},
 ): Promise<WaitForNewObjectResult> {
   const {
     type,
     nameContains,
     pollIntervalMs = 100,
     timeout = 10_000,
+    canvasId,
   } = options;
 
-  // 1. Capture the current set of UUIDs (baseline)
-  const baselineUuids: string[] = await page.evaluate(() => {
-    const api = window.__R3F_DOM__;
+  const baselineUuids: string[] = await page.evaluate((cid) => {
+    const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
     if (!api) return [];
     const snap = api.snapshot();
     const uuids: string[] = [];
@@ -404,7 +403,7 @@ export async function waitForNewObject(
     }
     collect(snap.tree as unknown as { uuid: string; children: Array<{ uuid: string; children: unknown[] }> });
     return uuids;
-  });
+  }, canvasId ?? null);
 
   const deadline = Date.now() + timeout;
 
@@ -413,8 +412,8 @@ export async function waitForNewObject(
     await page.waitForTimeout(pollIntervalMs);
 
     const result = await page.evaluate(
-      ([filterType, filterName, knownUuids]) => {
-        const api = window.__R3F_DOM__;
+      ([filterType, filterName, knownUuids, cid]) => {
+        const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
         if (!api) return null;
 
         const snap = api.snapshot();
@@ -473,7 +472,7 @@ export async function waitForNewObject(
           count: newObjects.length,
         };
       },
-      [type ?? null, nameContains ?? null, baselineUuids] as const,
+      [type ?? null, nameContains ?? null, baselineUuids, canvasId ?? null] as const,
     );
 
     if (result) {
@@ -527,25 +526,26 @@ export interface WaitForObjectRemovedOptions {
 export async function waitForObjectRemoved(
   page: Page,
   idOrUuid: string,
-  options: WaitForObjectRemovedOptions = {},
+  options: WaitForObjectRemovedOptions & { canvasId?: string } = {},
 ): Promise<void> {
   const {
     bridgeTimeout = 30_000,
     pollIntervalMs = 100,
     timeout = 10_000,
+    canvasId,
   } = options;
 
-  await waitForReadyBridge(page, bridgeTimeout);
+  await waitForReadyBridge(page, bridgeTimeout, canvasId);
 
   const deadline = Date.now() + timeout;
 
   while (Date.now() < deadline) {
-    const stillPresent = await page.evaluate((id) => {
-      const api = window.__R3F_DOM__;
-      if (!api) return true; // bridge gone, treat as still present so we keep waiting
+    const stillPresent = await page.evaluate(([id, cid]) => {
+      const api = cid ? window.__R3F_DOM_INSTANCES__?.[cid] : window.__R3F_DOM__;
+      if (!api) return true;
       const meta = api.getByTestId(id) ?? api.getByUuid(id);
       return meta !== null;
-    }, idOrUuid);
+    }, [idOrUuid, canvasId ?? null] as const);
 
     if (!stillPresent) return;
 

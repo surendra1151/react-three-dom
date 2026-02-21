@@ -24,6 +24,7 @@ export type {
   SceneSnapshot,
   SnapshotNode,
   BridgeDiagnostics,
+  CameraState,
   R3FDOM,
 } from './types';
 export type { SceneDiff, SceneDiffChange } from './diffSnapshots';

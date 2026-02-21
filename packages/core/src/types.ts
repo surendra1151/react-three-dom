@@ -26,6 +26,14 @@ export interface ObjectMetadata {
   triangleCount?: number;
   /** Instance count for InstancedMesh */
   instanceCount?: number;
+  /** Field of view in degrees (PerspectiveCamera only) */
+  fov?: number;
+  /** Near clipping plane (cameras only) */
+  near?: number;
+  /** Far clipping plane (cameras only) */
+  far?: number;
+  /** Zoom level (cameras only) */
+  zoom?: number;
   /** Local position as [x, y, z] */
   position: [number, number, number];
   /** Local euler rotation as [x, y, z] in radians */
@@ -205,6 +213,8 @@ export interface R3FDOM {
   contextMenu(idOrUuid: string): void;
   /** Deterministic hover on a 3D object */
   hover(idOrUuid: string): void;
+  /** Unhover / pointer-leave — resets hover state by moving pointer off-canvas */
+  unhover(): void;
   /** Deterministic drag on a 3D object (async — dispatches multi-step pointer sequence) */
   drag(idOrUuid: string, delta: { x: number; y: number; z: number }): Promise<void>;
   /** Dispatch a wheel/scroll event on a 3D object */
@@ -264,8 +274,41 @@ export interface R3FDOM {
    */
   fuzzyFind(query: string, limit?: number): ObjectMetadata[];
 
+  /** Get current camera state (position, rotation, fov, near, far, zoom, type) */
+  getCameraState(): CameraState;
+
+  /** Canvas identifier for multi-canvas apps. Undefined for the default/primary canvas. */
+  canvasId?: string;
+
   /** Library version */
   version: string;
+}
+
+// ---------------------------------------------------------------------------
+// Camera state — returned by getCameraState()
+// ---------------------------------------------------------------------------
+
+export interface CameraState {
+  type: 'PerspectiveCamera' | 'OrthographicCamera' | string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  /** World-space target the camera is looking at (derived from camera direction) */
+  target: [number, number, number];
+  /** Field of view in degrees (PerspectiveCamera only) */
+  fov?: number;
+  /** Near clipping plane */
+  near: number;
+  /** Far clipping plane */
+  far: number;
+  /** Zoom level */
+  zoom: number;
+  /** Aspect ratio (PerspectiveCamera only) */
+  aspect?: number;
+  /** Left/right/top/bottom (OrthographicCamera only) */
+  left?: number;
+  right?: number;
+  top?: number;
+  bottom?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -292,8 +335,15 @@ export interface BridgeDiagnostics {
 // Extend the global Window interface
 declare global {
   interface Window {
+    /** Default / primary bridge instance (last mounted, or explicitly marked primary). */
     __R3F_DOM__?: R3FDOM;
+    /** Registry of all active bridge instances keyed by canvasId. */
+    __R3F_DOM_INSTANCES__?: Record<string, R3FDOM>;
     /** Set to true to enable debug logging from @react-three-dom/core */
     __R3F_DOM_DEBUG__?: boolean;
+    /** @internal Mirror element currently hovered by DevTools inspector. */
+    __r3fdom_hovered__?: HTMLElement | null;
+    /** @internal Mirror element currently selected via DevTools / inspect mode. */
+    __r3fdom_selected_element__?: HTMLElement | null;
   }
 }

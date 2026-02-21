@@ -1,25 +1,7 @@
 import type { Page } from '@playwright/test';
+import type { BridgeDiagnostics } from './types';
 
-// ---------------------------------------------------------------------------
-// BridgeDiagnostics — mirrors the core type for serialization
-// ---------------------------------------------------------------------------
-
-export interface BridgeDiagnostics {
-  version: string;
-  ready: boolean;
-  error?: string;
-  objectCount: number;
-  meshCount: number;
-  groupCount: number;
-  lightCount: number;
-  cameraCount: number;
-  materializedDomNodes: number;
-  maxDomNodes: number;
-  canvasWidth: number;
-  canvasHeight: number;
-  webglRenderer: string;
-  dirtyQueueSize: number;
-}
+export type { BridgeDiagnostics };
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
@@ -48,9 +30,11 @@ function heading(msg: string): string { return `\n${TAG} ${BOLD}${MAGENTA}${msg}
 
 export class R3FReporter {
   private _enabled = true;
+  private _canvasId?: string;
 
-  constructor(private readonly _page: Page, enabled = true) {
+  constructor(private readonly _page: Page, enabled = true, canvasId?: string) {
     this._enabled = enabled;
+    this._canvasId = canvasId;
   }
 
   // -----------------------------------------------------------------------
@@ -150,21 +134,27 @@ export class R3FReporter {
   }
 
   async fetchDiagnostics(): Promise<BridgeDiagnostics | null> {
-    return this._page.evaluate(() => {
-      const api = (window as { __R3F_DOM__?: { getDiagnostics?(): unknown } }).__R3F_DOM__;
+    return this._page.evaluate((cid) => {
+      type ApiLike = { getDiagnostics?(): unknown };
+      const api = cid
+        ? (window as unknown as { __R3F_DOM_INSTANCES__?: Record<string, ApiLike> }).__R3F_DOM_INSTANCES__?.[cid]
+        : (window as unknown as { __R3F_DOM__?: ApiLike }).__R3F_DOM__;
       if (!api || typeof api.getDiagnostics !== 'function') return null;
       return api.getDiagnostics() as BridgeDiagnostics;
-    });
+    }, this._canvasId ?? null);
   }
 
   async fetchFuzzyMatches(query: string, limit = 5): Promise<Array<{ testId?: string; name: string; uuid: string }>> {
     return this._page.evaluate(
-      ({ q, lim }) => {
-        const api = (window as { __R3F_DOM__?: { fuzzyFind?(q: string, l: number): Array<{ testId?: string; name: string; uuid: string }> } }).__R3F_DOM__;
+      ({ q, lim, cid }) => {
+        type ApiLike = { fuzzyFind?(q: string, l: number): Array<{ testId?: string; name: string; uuid: string }> };
+        const api = cid
+          ? (window as unknown as { __R3F_DOM_INSTANCES__?: Record<string, ApiLike> }).__R3F_DOM_INSTANCES__?.[cid]
+          : (window as unknown as { __R3F_DOM__?: ApiLike }).__R3F_DOM__;
         if (!api || typeof api.fuzzyFind !== 'function') return [];
         return api.fuzzyFind(q, lim);
       },
-      { q: query, lim: limit },
+      { q: query, lim: limit, cid: this._canvasId ?? null },
     );
   }
 

@@ -417,8 +417,10 @@ export class Highlighter {
       }
     }
 
+    // Skip the bounding box for Groups — individual mesh highlights are
+    // sufficient and a filled bbox just obscures the scene.
     let bboxGroup: HighlightGroup | null = null;
-    if (targets.length > 1) {
+    if (targets.length > 1 && obj.type !== 'Group') {
       bboxGroup = createBoundingBoxHighlight(obj);
       if (bboxGroup) {
         this._scene.add(bboxGroup.root);
@@ -475,8 +477,7 @@ export class Highlighter {
     if (!this._store) return;
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const hoveredEl = (globalThis as any).__r3fdom_hovered__ as HTMLElement | undefined;
+      const hoveredEl = window.__r3fdom_hovered__;
       const uuid = hoveredEl?.getAttribute?.('data-uuid') ?? null;
 
       if (uuid === this._lastHoveredUuid) return;

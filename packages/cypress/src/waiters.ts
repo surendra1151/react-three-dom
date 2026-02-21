@@ -1,6 +1,7 @@
 /// <reference types="cypress" />
 import type { R3FDOM, ObjectMetadata, SnapshotNode, BridgeDiagnostics } from './types';
 import { _getReporter } from './reporterState';
+import { _getActiveCanvasId } from './commands';
 
 // ---------------------------------------------------------------------------
 // r3fWaitForSceneReady — wait until the bridge is ready and object count
@@ -16,13 +17,19 @@ export interface WaitForSceneReadyOptions {
   timeout?: number;
 }
 
+function resolveApiFromWindow(win: Cypress.AUTWindow): R3FDOM | undefined {
+  const w = win as Window & { __R3F_DOM__?: R3FDOM; __R3F_DOM_INSTANCES__?: Record<string, R3FDOM> };
+  const cid = _getActiveCanvasId();
+  return cid ? w.__R3F_DOM_INSTANCES__?.[cid] : w.__R3F_DOM__;
+}
+
 function getBridgeState(win: Cypress.AUTWindow): {
   exists: boolean;
   ready: boolean;
   error: string | null;
   count: number;
 } {
-  const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+  const api = resolveApiFromWindow(win);
   if (!api) return { exists: false, ready: false, error: null, count: 0 };
   return {
     exists: true,
@@ -82,7 +89,7 @@ export function registerWaiters(): void {
 
           if (!bridgeLogged) {
             bridgeLogged = true;
-            const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__!;
+            const api = resolveApiFromWindow(win)!;
             let diag: BridgeDiagnostics | undefined;
             if (typeof api.getDiagnostics === 'function') {
               diag = api.getDiagnostics();
@@ -147,7 +154,7 @@ export function registerWaiters(): void {
             return cy.wait(pollIntervalMs, { log: false }).then(() => poll());
           }
 
-          const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__!;
+          const api = resolveApiFromWindow(win)!;
           const snap = api.snapshot();
           const hash = hashTree(snap.tree);
 
@@ -220,7 +227,7 @@ export function registerWaiters(): void {
       function pollForObject(): Cypress.Chainable<void> {
         if (Date.now() - objectStart > objectTimeout) {
           return cy.window({ log: false }).then((win) => {
-            const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+            const api = resolveApiFromWindow(win);
             const state = getBridgeState(win);
             let msg =
               `r3fWaitForObject("${idOrUuid}") timed out after ${objectTimeout}ms.\n` +
@@ -245,7 +252,7 @@ export function registerWaiters(): void {
         }
 
         return cy.window({ log: false }).then((win) => {
-          const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+          const api = resolveApiFromWindow(win);
           if (!api || !api._ready) {
             return cy.wait(pollIntervalMs, { log: false }).then(() => pollForObject());
           }
@@ -301,7 +308,7 @@ export function registerWaiters(): void {
         assertBridgeNotErrored(state);
 
         if (state.exists && state.ready) {
-          const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__!;
+          const api = resolveApiFromWindow(win)!;
           const snap = api.snapshot();
           collectUuids(snap.tree);
         }
@@ -329,7 +336,7 @@ export function registerWaiters(): void {
 
               if (!bridgeState.exists || !bridgeState.ready) return poll();
 
-              const bridge = (w as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__!;
+              const bridge = resolveApiFromWindow(w)!;
 
               const snap = bridge.snapshot();
               const newObjects: ObjectMetadata[] = [];
@@ -421,7 +428,7 @@ export function registerWaiters(): void {
         }
 
         return cy.window({ log: false }).then((win) => {
-          const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+          const api = resolveApiFromWindow(win);
           if (!api || !api._ready) {
             return cy.wait(pollIntervalMs, { log: false }).then(() => pollForRemoved());
           }

@@ -114,8 +114,7 @@ export class InspectController {
     this._cancelHoverReveal();
     this._highlighter.clearHoverHighlight();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (window as any).__r3fdom_selected_element__ = null;
+    window.__r3fdom_selected_element__ = null;
 
     r3fLog('inspect', 'InspectController disabled');
   }
@@ -187,8 +186,7 @@ export class InspectController {
     this._hoverRevealTimer = setTimeout(() => {
       const mirrorEl = this._mirror.getOrMaterialize(target.uuid);
       if (mirrorEl) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (window as any).__r3fdom_selected_element__ = mirrorEl;
+        window.__r3fdom_selected_element__ = mirrorEl;
       }
     }, HOVER_REVEAL_DEBOUNCE_MS);
   }
@@ -218,8 +216,7 @@ export class InspectController {
 
     const mirrorEl = this._mirror.getOrMaterialize(target.uuid);
     if (mirrorEl) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).__r3fdom_selected_element__ = mirrorEl;
+      window.__r3fdom_selected_element__ = mirrorEl;
     }
 
     r3fLog('inspect', 'Object selected via canvas click', {

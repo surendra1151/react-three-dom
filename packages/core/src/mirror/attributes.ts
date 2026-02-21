@@ -23,6 +23,10 @@ const ATTRIBUTE_MAP: Record<string, (meta: ObjectMetadata) => string | undefined
   'data-vertex-count': (m) => m.vertexCount !== undefined ? String(m.vertexCount) : undefined,
   'data-triangle-count': (m) => m.triangleCount !== undefined ? String(m.triangleCount) : undefined,
   'data-instance-count': (m) => m.instanceCount !== undefined ? String(m.instanceCount) : undefined,
+  'data-fov': (m) => m.fov !== undefined ? String(m.fov) : undefined,
+  'data-near': (m) => m.near !== undefined ? String(m.near) : undefined,
+  'data-far': (m) => m.far !== undefined ? String(m.far) : undefined,
+  'data-zoom': (m) => m.zoom !== undefined ? String(m.zoom) : undefined,
 };
 
 /** All attribute names we manage (for diffing). */

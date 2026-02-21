@@ -6,6 +6,8 @@ import {
   Material,
   Box3,
   Color,
+  PerspectiveCamera,
+  OrthographicCamera,
 } from 'three';
 import type {
   ObjectMetadata,
@@ -88,6 +90,21 @@ function extractStaticFields(obj: Object3D, meta: ObjectMetadata): void {
     }
   } catch {
     // Skip instance count if access fails
+  }
+
+  try {
+    if (obj instanceof PerspectiveCamera) {
+      meta.fov = obj.fov;
+      meta.near = obj.near;
+      meta.far = obj.far;
+      meta.zoom = obj.zoom;
+    } else if (obj instanceof OrthographicCamera) {
+      meta.near = obj.near;
+      meta.far = obj.far;
+      meta.zoom = obj.zoom;
+    }
+  } catch {
+    // Skip camera fields if access fails
   }
 }
 
@@ -188,13 +205,14 @@ function inspectObject(obj: Object3D, metadata: ObjectMetadata, options?: Inspec
   try {
     if ('geometry' in obj) {
       const geom = (obj as Mesh).geometry;
-      if (geom instanceof BufferGeometry) {
+      if (geom instanceof BufferGeometry && geom.attributes) {
         const geoInspection: GeometryInspection = {
           type: geom.type,
           attributes: {},
         };
 
         for (const [name, attr] of Object.entries(geom.attributes)) {
+          if (!attr) continue;
           geoInspection.attributes[name] = {
             itemSize: attr.itemSize,
             count: attr.count,
@@ -235,6 +253,7 @@ function inspectObject(obj: Object3D, metadata: ObjectMetadata, options?: Inspec
   try {
     if ('material' in obj) {
       const rawMat = (obj as Mesh).material;
+      if (!rawMat) throw new Error('disposed');
       const mat = Array.isArray(rawMat) ? rawMat[0] : rawMat;
       if (mat instanceof Material) {
         const matInspection: MaterialInspection = {

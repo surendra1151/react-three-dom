@@ -6,12 +6,22 @@
 //   import '@react-three-dom/cypress';
 // ---------------------------------------------------------------------------
 
-import type { ObjectMetadata, ObjectInspection, SceneSnapshot, BridgeDiagnostics } from './types';
+import type { ObjectMetadata, ObjectInspection, SceneSnapshot, BridgeDiagnostics, CameraState } from './types';
 import type { SceneDiff } from './diffSnapshots';
 
 declare global {
   namespace Cypress {
     interface Chainable {
+      // ---- Multi-canvas ----
+      /**
+       * Switch all subsequent r3f commands to target a specific canvas instance.
+       * Pass `null` to switch back to the default canvas.
+       * @example cy.r3fUseCanvas('minimap'); cy.r3fClick('marker');
+       */
+      r3fUseCanvas(canvasId: string | null): Chainable<void>;
+      /** List all active canvas IDs registered on the page. */
+      r3fGetCanvasIds(): Chainable<string[]>;
+
       // ---- Debug / Reporter ----
       /** Enable debug logging. Mirrors [r3f-dom:*] browser logs to Cypress command log. */
       r3fEnableDebug(): Chainable<void>;
@@ -40,6 +50,8 @@ declare global {
       r3fContextMenu(idOrUuid: string): Chainable<void>;
       /** Hover over a 3D object by testId or uuid. Auto-waits for bridge + object. */
       r3fHover(idOrUuid: string): Chainable<void>;
+      /** Unhover / pointer-leave — resets hover state. Auto-waits for bridge. */
+      r3fUnhover(): Chainable<void>;
       /** Drag a 3D object with a world-space delta vector. Auto-waits for bridge + object. */
       r3fDrag(idOrUuid: string, delta: { x: number; y: number; z: number }): Chainable<void>;
       /** Dispatch a wheel/scroll event on a 3D object. Auto-waits for bridge + object. */
@@ -99,6 +111,10 @@ declare global {
       r3fGetCountByType(type: string): Chainable<number>;
       /** Batch lookup: get metadata for multiple objects by testId or uuid. */
       r3fGetObjects(ids: string[]): Chainable<Record<string, ObjectMetadata | null>>;
+
+      // ---- Camera ----
+      /** Get current camera state (position, rotation, fov, near, far, zoom, target). */
+      r3fGetCameraState(): Chainable<CameraState>;
 
       // ---- Waiters ----
       /** Wait until the scene is ready (bridge available, object count stable). */
@@ -200,6 +216,26 @@ declare global {
       r3fTotalTriangleCount(expected: number): Assertion;
       /** Assert total triangle count is less than a maximum (performance budget). */
       r3fTotalTriangleCountLessThan(max: number): Assertion;
+
+      // ---- Camera assertions ----
+      /** Assert camera position within tolerance. */
+      r3fCameraPosition(expected: [number, number, number], tolerance?: number): Assertion;
+      /** Assert camera field of view (PerspectiveCamera). */
+      r3fCameraFov(expected: number, tolerance?: number): Assertion;
+      /** Assert camera near clipping plane. */
+      r3fCameraNear(expected: number, tolerance?: number): Assertion;
+      /** Assert camera far clipping plane. */
+      r3fCameraFar(expected: number, tolerance?: number): Assertion;
+      /** Assert camera zoom level. */
+      r3fCameraZoom(expected: number, tolerance?: number): Assertion;
+
+      // ---- Batch assertions ----
+      /** Assert ALL given objects exist. Accepts array of ids or glob pattern (e.g. "wall-*"). */
+      r3fAllExist(idsOrPattern: string[] | string): Assertion;
+      /** Assert ALL given objects are visible. Accepts array of ids or glob pattern. */
+      r3fAllVisible(idsOrPattern: string[] | string): Assertion;
+      /** Assert NONE of the given objects exist. Accepts array of ids or glob pattern. */
+      r3fNoneExist(idsOrPattern: string[] | string): Assertion;
     }
   }
 }

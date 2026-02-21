@@ -24,6 +24,7 @@ interface BridgeDiagnostics {
 interface R3FDOM {
   _ready: boolean;
   _error?: string;
+  canvasId?: string;
   getByTestId(id: string): ObjectMetadata | null;
   getByUuid(uuid: string): ObjectMetadata | null;
   getByName(name: string): ObjectMetadata[];
@@ -42,6 +43,7 @@ interface R3FDOM {
   doubleClick(idOrUuid: string): void;
   contextMenu(idOrUuid: string): void;
   hover(idOrUuid: string): void;
+  unhover(): void;
   drag(idOrUuid: string, delta: { x: number; y: number; z: number }): Promise<void>;
   wheel(idOrUuid: string, options?: { deltaY?: number; deltaX?: number }): void;
   pointerMiss(): void;
@@ -56,12 +58,30 @@ interface R3FDOM {
   setInspectMode(on: boolean): void;
   sweepOrphans(): number;
   getDiagnostics(): BridgeDiagnostics;
+  getCameraState(): CameraState;
   fuzzyFind(query: string, limit?: number): ObjectMetadata[];
   version: string;
+}
+
+interface CameraState {
+  type: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  target: [number, number, number];
+  fov?: number;
+  near: number;
+  far: number;
+  zoom: number;
+  aspect?: number;
+  left?: number;
+  right?: number;
+  top?: number;
+  bottom?: number;
 }
 
 declare global {
   interface Window {
     __R3F_DOM__?: R3FDOM;
+    __R3F_DOM_INSTANCES__?: Record<string, R3FDOM>;
   }
 }
