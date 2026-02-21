@@ -251,8 +251,42 @@ export interface R3FDOM {
    */
   sweepOrphans(): number;
 
+  /**
+   * Rich diagnostics for test runners and debugging.
+   * Returns bridge health, scene stats, and WebGL context info.
+   */
+  getDiagnostics(): BridgeDiagnostics;
+
+  /**
+   * Fuzzy search: find objects whose testId or name contains the query string.
+   * Returns up to `limit` matches. Used by test runners to suggest corrections
+   * when an object is not found.
+   */
+  fuzzyFind(query: string, limit?: number): ObjectMetadata[];
+
   /** Library version */
   version: string;
+}
+
+// ---------------------------------------------------------------------------
+// Bridge diagnostics — returned by getDiagnostics()
+// ---------------------------------------------------------------------------
+
+export interface BridgeDiagnostics {
+  version: string;
+  ready: boolean;
+  error?: string;
+  objectCount: number;
+  meshCount: number;
+  groupCount: number;
+  lightCount: number;
+  cameraCount: number;
+  materializedDomNodes: number;
+  maxDomNodes: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  webglRenderer: string;
+  dirtyQueueSize: number;
 }
 
 // Extend the global Window interface

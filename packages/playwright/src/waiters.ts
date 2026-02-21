@@ -194,26 +194,42 @@ export async function waitForObject(
     await page.waitForTimeout(pollIntervalMs);
   }
 
-  // Build diagnostic — check if the bridge is alive but the object simply doesn't exist
-  const diagnostics = await page.evaluate(() => {
-    const api = window.__R3F_DOM__;
-    if (!api) return { bridgeExists: false, ready: false, count: 0, error: null };
-    return {
-      bridgeExists: true,
-      ready: api._ready,
-      count: api.getCount(),
-      error: api._error ?? null,
-    };
-  });
+  // Build diagnostic with fuzzy suggestions
+  const diagnostics = await page.evaluate(
+    (id) => {
+      const api = window.__R3F_DOM__;
+      if (!api) return { bridgeExists: false, ready: false, count: 0, error: null, suggestions: [] as Array<{ testId?: string; name: string; uuid: string }> };
+      const suggestions = typeof api.fuzzyFind === 'function'
+        ? api.fuzzyFind(id, 5).map((m: { testId?: string; name: string; uuid: string }) => ({ testId: m.testId, name: m.name, uuid: m.uuid }))
+        : [];
+      return {
+        bridgeExists: true,
+        ready: api._ready,
+        count: api.getCount(),
+        error: api._error ?? null,
+        suggestions,
+      };
+    },
+    idOrUuid,
+  );
 
-  throw new Error(
+  let msg =
     `waitForObject("${idOrUuid}") timed out after ${objectTimeout}ms. ` +
     `Bridge: ${diagnostics.bridgeExists ? 'exists' : 'missing'}, ` +
     `ready: ${diagnostics.ready}, ` +
     `objectCount: ${diagnostics.count}` +
     (diagnostics.error ? `, error: ${diagnostics.error}` : '') + '. ' +
-    `Is the object rendered with userData.testId="${idOrUuid}" or uuid="${idOrUuid}"?`,
-  );
+    `Is the object rendered with userData.testId="${idOrUuid}" or uuid="${idOrUuid}"?`;
+
+  if (diagnostics.suggestions.length > 0) {
+    msg += '\nDid you mean:\n' +
+      diagnostics.suggestions.map((s: { testId?: string; name: string; uuid: string }) => {
+        const id = s.testId ? `testId="${s.testId}"` : `uuid="${s.uuid}"`;
+        return `  → ${s.name || '(unnamed)'} [${id}]`;
+      }).join('\n');
+  }
+
+  throw new Error(msg);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,9 +1,11 @@
 /// <reference types="cypress" />
-import type { R3FDOM, SnapshotNode, SceneSnapshot } from './types';
+import type { R3FDOM, SnapshotNode, SceneSnapshot, BridgeDiagnostics, ObjectMetadata } from './types';
 import { diffSnapshots } from './diffSnapshots';
+import { R3FReporter } from './reporter';
+import { _setReporter, _getReporter } from './reporterState';
 
 // ---------------------------------------------------------------------------
-// Helper to get the R3F DOM bridge from the current window
+// Bridge access helpers
 // ---------------------------------------------------------------------------
 
 function getR3F(win: Cypress.AUTWindow): R3FDOM {
@@ -17,7 +19,99 @@ function getR3F(win: Cypress.AUTWindow): R3FDOM {
 }
 
 // ---------------------------------------------------------------------------
-// Scene tree formatter — used by r3fLogScene
+// Auto-wait: poll until bridge is ready + object exists
+// ---------------------------------------------------------------------------
+
+const AUTO_WAIT_TIMEOUT = 5_000;
+const AUTO_WAIT_POLL_MS = 100;
+
+function autoWaitForBridge(timeout = AUTO_WAIT_TIMEOUT): Cypress.Chainable<R3FDOM> {
+  const deadline = Date.now() + timeout;
+
+  function poll(): Cypress.Chainable<R3FDOM> {
+    return cy.window({ log: false }).then((win) => {
+      const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+
+      if (api && api._ready) return api;
+
+      if (api && !api._ready && api._error) {
+        throw new Error(
+          `[react-three-dom] Bridge initialization failed: ${api._error}`,
+        );
+      }
+
+      if (Date.now() > deadline) {
+        throw new Error(
+          `[react-three-dom] Auto-wait timed out after ${timeout}ms: bridge not ready.\n` +
+          `Ensure <ThreeDom> is mounted inside your <Canvas> component.`,
+        );
+      }
+
+      return cy.wait(AUTO_WAIT_POLL_MS, { log: false }).then(() => poll());
+    });
+  }
+
+  return poll();
+}
+
+function autoWaitForObject(
+  idOrUuid: string,
+  timeout = AUTO_WAIT_TIMEOUT,
+): Cypress.Chainable<R3FDOM> {
+  const deadline = Date.now() + timeout;
+
+  function poll(): Cypress.Chainable<R3FDOM> {
+    return cy.window({ log: false }).then((win) => {
+      const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
+
+      if (!api) {
+        if (Date.now() > deadline) {
+          throw new Error(
+            `[react-three-dom] Auto-wait timed out after ${timeout}ms: bridge not found.`,
+          );
+        }
+        return cy.wait(AUTO_WAIT_POLL_MS, { log: false }).then(() => poll());
+      }
+
+      if (!api._ready && api._error) {
+        throw new Error(
+          `[react-three-dom] Bridge initialization failed: ${api._error}`,
+        );
+      }
+
+      if (api._ready) {
+        const found = (api.getByTestId(idOrUuid) ?? api.getByUuid(idOrUuid)) !== null;
+        if (found) return api;
+      }
+
+      if (Date.now() > deadline) {
+        let msg =
+          `[react-three-dom] Auto-wait timed out after ${timeout}ms: object "${idOrUuid}" not found.\n` +
+          `Bridge: ready=${api._ready}, objectCount=${api.getCount()}.\n` +
+          `Ensure the object has userData.testId="${idOrUuid}" or uuid="${idOrUuid}".`;
+
+        if (typeof api.fuzzyFind === 'function') {
+          const suggestions = api.fuzzyFind(idOrUuid, 5);
+          if (suggestions.length > 0) {
+            msg += '\nDid you mean:\n' + suggestions.map((s) => {
+              const id = s.testId ? `testId="${s.testId}"` : `uuid="${s.uuid}"`;
+              return `  → ${s.name || '(unnamed)'} [${id}]`;
+            }).join('\n');
+          }
+        }
+
+        throw new Error(msg);
+      }
+
+      return cy.wait(AUTO_WAIT_POLL_MS, { log: false }).then(() => poll());
+    });
+  }
+
+  return poll();
+}
+
+// ---------------------------------------------------------------------------
+// Scene tree formatter
 // ---------------------------------------------------------------------------
 
 function formatCypressSceneTree(node: SnapshotNode, prefix = '', isLast = true): string {
@@ -41,16 +135,24 @@ function formatCypressSceneTree(node: SnapshotNode, prefix = '', isLast = true):
 }
 
 // ---------------------------------------------------------------------------
-// Custom commands — all prefixed with `r3f` for clarity
+// Custom commands
 // ---------------------------------------------------------------------------
 
 export function registerCommands(): void {
+  // ---- Reporter ----
+  Cypress.Commands.add('r3fEnableReporter', (enabled = true) => {
+    if (enabled) {
+      _setReporter(new R3FReporter(true));
+    } else {
+      _setReporter(null);
+    }
+  });
+
   // ---- Debug logging ----
   Cypress.Commands.add('r3fEnableDebug', () => {
     cy.window({ log: false }).then((win) => {
       (win as Window).__R3F_DOM_DEBUG__ = true;
     });
-    // Mirror [r3f-dom:*] browser console messages to the Cypress command log
     Cypress.on('window:before:load', (win) => {
       const origLog = win.console.log;
       win.console.log = (...args: unknown[]) => {
@@ -67,36 +169,53 @@ export function registerCommands(): void {
     });
   });
 
-  // ---- Interactions ----
+  // ---- Interactions (all auto-wait for bridge + object) ----
+
   Cypress.Commands.add('r3fClick', (idOrUuid: string) => {
-    cy.window({ log: false }).then((win) => {
-      getR3F(win).click(idOrUuid);
+    const reporter = _getReporter();
+    const t0 = Date.now();
+    reporter?.logInteraction('click', idOrUuid);
+    return autoWaitForObject(idOrUuid).then((api) => {
+      api.click(idOrUuid);
+      reporter?.logInteractionDone('click', idOrUuid, Date.now() - t0);
     });
   });
 
   Cypress.Commands.add('r3fDoubleClick', (idOrUuid: string) => {
-    cy.window({ log: false }).then((win) => {
-      getR3F(win).doubleClick(idOrUuid);
+    const reporter = _getReporter();
+    const t0 = Date.now();
+    reporter?.logInteraction('doubleClick', idOrUuid);
+    return autoWaitForObject(idOrUuid).then((api) => {
+      api.doubleClick(idOrUuid);
+      reporter?.logInteractionDone('doubleClick', idOrUuid, Date.now() - t0);
     });
   });
 
   Cypress.Commands.add('r3fContextMenu', (idOrUuid: string) => {
-    cy.window({ log: false }).then((win) => {
-      getR3F(win).contextMenu(idOrUuid);
+    const reporter = _getReporter();
+    const t0 = Date.now();
+    reporter?.logInteraction('contextMenu', idOrUuid);
+    return autoWaitForObject(idOrUuid).then((api) => {
+      api.contextMenu(idOrUuid);
+      reporter?.logInteractionDone('contextMenu', idOrUuid, Date.now() - t0);
     });
   });
 
   Cypress.Commands.add('r3fHover', (idOrUuid: string) => {
-    cy.window({ log: false }).then((win) => {
-      getR3F(win).hover(idOrUuid);
+    const reporter = _getReporter();
+    const t0 = Date.now();
+    reporter?.logInteraction('hover', idOrUuid);
+    return autoWaitForObject(idOrUuid).then((api) => {
+      api.hover(idOrUuid);
+      reporter?.logInteractionDone('hover', idOrUuid, Date.now() - t0);
     });
   });
 
   Cypress.Commands.add(
     'r3fDrag',
     (idOrUuid: string, delta: { x: number; y: number; z: number }) => {
-      cy.window({ log: false }).then((win) => {
-        return getR3F(win).drag(idOrUuid, delta);
+      return autoWaitForObject(idOrUuid).then((api) => {
+        return Cypress.Promise.resolve(api.drag(idOrUuid, delta));
       });
     },
   );
@@ -104,31 +223,46 @@ export function registerCommands(): void {
   Cypress.Commands.add(
     'r3fWheel',
     (idOrUuid: string, options?: { deltaY?: number; deltaX?: number }) => {
-      cy.window({ log: false }).then((win) => {
-        getR3F(win).wheel(idOrUuid, options);
+      return autoWaitForObject(idOrUuid).then((api) => {
+        api.wheel(idOrUuid, options);
       });
     },
   );
 
   Cypress.Commands.add('r3fPointerMiss', () => {
-    cy.window({ log: false }).then((win) => {
-      getR3F(win).pointerMiss();
+    return autoWaitForBridge().then((api) => {
+      api.pointerMiss();
     });
   });
 
   Cypress.Commands.add('r3fSelect', (idOrUuid: string) => {
-    cy.window({ log: false }).then((win) => {
-      getR3F(win).select(idOrUuid);
+    return autoWaitForObject(idOrUuid).then((api) => {
+      api.select(idOrUuid);
     });
   });
 
   Cypress.Commands.add('r3fClearSelection', () => {
-    cy.window({ log: false }).then((win) => {
-      getR3F(win).clearSelection();
+    return autoWaitForBridge().then((api) => {
+      api.clearSelection();
     });
   });
 
+  // ---- Drawing (auto-wait for bridge, uses Cypress.Promise for async) ----
+
+  Cypress.Commands.add(
+    'r3fDrawPath',
+    (
+      points: Array<{ x: number; y: number; pressure?: number }>,
+      options?: { stepDelayMs?: number; pointerType?: 'mouse' | 'pen' | 'touch'; clickAtEnd?: boolean },
+    ) => {
+      return autoWaitForBridge().then((api) => {
+        return Cypress.Promise.resolve(api.drawPath(points, options));
+      });
+    },
+  );
+
   // ---- Diagnostics ----
+
   Cypress.Commands.add('r3fLogScene', () => {
     return cy.window({ log: false }).then((win) => {
       const api = getR3F(win);
@@ -142,17 +276,62 @@ export function registerCommands(): void {
         consoleProps: () => ({ snapshot: snap, tree: output }),
       });
 
-      // Also log to browser console for visibility
       // eslint-disable-next-line no-console
       console.log(`[r3f-dom] ${output}`);
     });
   });
 
+  Cypress.Commands.add('r3fGetDiagnostics', () => {
+    return cy.window({ log: false }).then((win) => {
+      const api = getR3F(win);
+      if (typeof api.getDiagnostics !== 'function') return null;
+      return api.getDiagnostics();
+    });
+  });
+
+  Cypress.Commands.add('r3fLogDiagnostics', () => {
+    return cy.window({ log: false }).then((win) => {
+      const api = getR3F(win);
+      if (typeof api.getDiagnostics !== 'function') {
+        Cypress.log({ name: 'r3fLogDiagnostics', message: 'getDiagnostics not available' });
+        return;
+      }
+      const d = api.getDiagnostics();
+      const lines = [
+        `Bridge Diagnostics`,
+        `  Status:    ${d.ready ? 'READY' : 'NOT READY'}  v${d.version}`,
+        d.error ? `  Error:     ${d.error}` : null,
+        `  Objects:   ${d.objectCount} total`,
+        `             ${d.meshCount} meshes, ${d.groupCount} groups, ${d.lightCount} lights, ${d.cameraCount} cameras`,
+        `  DOM:       ${d.materializedDomNodes}/${d.maxDomNodes} materialized`,
+        `  Canvas:    ${d.canvasWidth}×${d.canvasHeight}`,
+        `  GPU:       ${d.webglRenderer}`,
+        `  Dirty:     ${d.dirtyQueueSize} queued updates`,
+      ].filter(Boolean).join('\n');
+
+      Cypress.log({
+        name: 'r3fLogDiagnostics',
+        message: `v${d.version} ${d.objectCount} objects`,
+        consoleProps: () => ({ diagnostics: d, formatted: lines }),
+      });
+
+      // eslint-disable-next-line no-console
+      console.log(`[r3f-dom] ${lines}`);
+    });
+  });
+
   // ---- Queries ----
+
   Cypress.Commands.add('r3fGetObject', (idOrUuid: string) => {
     return cy.window({ log: false }).then((win) => {
       const api = getR3F(win);
       return api.getByTestId(idOrUuid) ?? api.getByUuid(idOrUuid) ?? null;
+    });
+  });
+
+  Cypress.Commands.add('r3fGetByTestId', (testId: string) => {
+    return cy.window({ log: false }).then((win) => {
+      return getR3F(win).getByTestId(testId);
     });
   });
 
@@ -180,7 +359,6 @@ export function registerCommands(): void {
     });
   });
 
-  /** Get the R3F canvas element (has data-r3f-canvas="true"). Use for canvas-level actions. */
   Cypress.Commands.add('r3fGetCanvas', () => {
     return cy.get('[data-r3f-canvas]');
   });
@@ -230,21 +408,6 @@ export function registerCommands(): void {
     });
   });
 
-  // ---- Drawing interactions ----
-
-  Cypress.Commands.add(
-    'r3fDrawPath',
-    (
-      points: Array<{ x: number; y: number; pressure?: number }>,
-      options?: { stepDelayMs?: number; pointerType?: 'mouse' | 'pen' | 'touch'; clickAtEnd?: boolean },
-    ) => {
-      return cy.window({ log: false }).then(async (win) => {
-        const api = getR3F(win);
-        return api.drawPath(points, options);
-      });
-    },
-  );
-
   // ---- BIM/CAD queries ----
 
   Cypress.Commands.add('r3fGetByType', (type: string) => {
@@ -280,6 +443,14 @@ export function registerCommands(): void {
   Cypress.Commands.add('r3fGetByMaterialType', (type: string) => {
     return cy.window({ log: false }).then((win) => {
       return getR3F(win).getByMaterialType(type);
+    });
+  });
+
+  Cypress.Commands.add('r3fFuzzyFind', (query: string, limit?: number) => {
+    return cy.window({ log: false }).then((win) => {
+      const api = getR3F(win);
+      if (typeof api.fuzzyFind !== 'function') return [];
+      return api.fuzzyFind(query, limit);
     });
   });
 }

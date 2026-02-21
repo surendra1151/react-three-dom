@@ -23,6 +23,9 @@ export type {
   ObjectInspection,
   SceneSnapshot,
   SnapshotNode,
+  BridgeDiagnostics,
   R3FDOM,
 } from './types';
 export type { SceneDiff, SceneDiffChange } from './diffSnapshots';
+export { diffSnapshots } from './diffSnapshots';
+export { R3FReporter, registerR3FTasks } from './reporter';

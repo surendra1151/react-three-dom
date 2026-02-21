@@ -33,6 +33,8 @@ export interface ObjectInspection {
     attributes: Record<string, { itemSize: number; count: number }>;
     index?: { count: number };
     boundingSphere?: { center: [number, number, number]; radius: number };
+    positionData?: number[];
+    indexData?: number[];
   };
   material?: {
     type: string;
@@ -55,6 +57,11 @@ export interface SnapshotNode {
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
+  geometryType?: string;
+  materialType?: string;
+  vertexCount?: number;
+  triangleCount?: number;
+  instanceCount?: number;
   children: SnapshotNode[];
 }
 
@@ -62,6 +69,23 @@ export interface SceneSnapshot {
   timestamp: number;
   objectCount: number;
   tree: SnapshotNode;
+}
+
+export interface BridgeDiagnostics {
+  version: string;
+  ready: boolean;
+  error?: string;
+  objectCount: number;
+  meshCount: number;
+  groupCount: number;
+  lightCount: number;
+  cameraCount: number;
+  materializedDomNodes: number;
+  maxDomNodes: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  webglRenderer: string;
+  dirtyQueueSize: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +122,11 @@ export interface R3FDOM {
   ): Promise<{ eventCount: number; pointCount: number }>;
   select(idOrUuid: string): void;
   clearSelection(): void;
+  getSelection(): string[];
   getObject3D(idOrUuid: string): unknown;
+  setInspectMode(on: boolean): void;
+  sweepOrphans(): number;
+  getDiagnostics(): BridgeDiagnostics;
+  fuzzyFind(query: string, limit?: number): ObjectMetadata[];
   version: string;
 }

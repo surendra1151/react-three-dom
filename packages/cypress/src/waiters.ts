@@ -1,5 +1,6 @@
 /// <reference types="cypress" />
-import type { R3FDOM, ObjectMetadata, SnapshotNode } from './types';
+import type { R3FDOM, ObjectMetadata, SnapshotNode, BridgeDiagnostics } from './types';
+import { _getReporter } from './reporterState';
 
 // ---------------------------------------------------------------------------
 // r3fWaitForSceneReady — wait until the bridge is ready and object count
@@ -15,9 +16,6 @@ export interface WaitForSceneReadyOptions {
   timeout?: number;
 }
 
-/**
- * Get bridge state from the window for diagnostic purposes.
- */
 function getBridgeState(win: Cypress.AUTWindow): {
   exists: boolean;
   ready: boolean;
@@ -34,11 +32,10 @@ function getBridgeState(win: Cypress.AUTWindow): {
   };
 }
 
-/**
- * Check if the bridge is in an error state and throw with diagnostics.
- */
 function assertBridgeNotErrored(state: { exists: boolean; ready: boolean; error: string | null }): void {
   if (state.exists && !state.ready && state.error) {
+    const reporter = _getReporter();
+    reporter?.logBridgeError(state.error);
     throw new Error(
       `[react-three-dom] Bridge initialization failed: ${state.error}\n` +
       `The <ThreeDom> component mounted but threw during setup. ` +
@@ -57,12 +54,19 @@ export function registerWaiters(): void {
         timeout = 10_000,
       } = options;
 
+      const reporter = _getReporter();
+      reporter?.logBridgeWaiting();
+
       const startTime = Date.now();
       let lastCount = -1;
       let stableRuns = 0;
+      let bridgeLogged = false;
 
       function poll(): Cypress.Chainable<void> {
         if (Date.now() - startTime > timeout) {
+          reporter?.logBridgeError(
+            `Timed out after ${timeout}ms. Last count: ${lastCount}, stable: ${stableRuns}/${stableChecks}`,
+          );
           throw new Error(
             `r3fWaitForSceneReady timed out after ${timeout}ms. Last count: ${lastCount}, stable runs: ${stableRuns}/${stableChecks}`,
           );
@@ -70,13 +74,20 @@ export function registerWaiters(): void {
 
         return cy.window({ log: false }).then((win) => {
           const state = getBridgeState(win);
-
-          // Fail fast if bridge errored
           assertBridgeNotErrored(state);
 
           if (!state.exists || !state.ready) {
-            // Bridge not yet available or not ready, keep polling
             return cy.wait(pollIntervalMs, { log: false }).then(() => poll());
+          }
+
+          if (!bridgeLogged) {
+            bridgeLogged = true;
+            const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__!;
+            let diag: BridgeDiagnostics | undefined;
+            if (typeof api.getDiagnostics === 'function') {
+              diag = api.getDiagnostics();
+            }
+            reporter?.logBridgeConnected(diag);
           }
 
           const count = state.count;
@@ -84,7 +95,8 @@ export function registerWaiters(): void {
           if (count === lastCount && count > 0) {
             stableRuns++;
             if (stableRuns >= stableChecks) {
-              return; // Done — scene is ready
+              reporter?.logSceneReady(count);
+              return;
             }
           } else {
             stableRuns = 0;
@@ -113,8 +125,14 @@ export function registerWaiters(): void {
       } = options;
 
       const startTime = Date.now();
-      let lastJson = '';
+      let lastHash = '';
       let stableCount = 0;
+
+      function hashTree(node: SnapshotNode): string {
+        let h = `${node.uuid}:${node.visible ? 1 : 0}:${node.position[0].toFixed(3)},${node.position[1].toFixed(3)},${node.position[2].toFixed(3)}:${node.children.length}`;
+        for (const c of node.children) h += '|' + hashTree(c);
+        return h;
+      }
 
       function poll(): Cypress.Chainable<void> {
         if (Date.now() - startTime > timeout) {
@@ -123,8 +141,6 @@ export function registerWaiters(): void {
 
         return cy.window({ log: false }).then((win) => {
           const state = getBridgeState(win);
-
-          // Fail fast if bridge errored
           assertBridgeNotErrored(state);
 
           if (!state.exists || !state.ready) {
@@ -133,18 +149,18 @@ export function registerWaiters(): void {
 
           const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__!;
           const snap = api.snapshot();
-          const json = JSON.stringify(snap.tree);
+          const hash = hashTree(snap.tree);
 
-          if (json === lastJson && json !== '') {
+          if (hash === lastHash && hash !== '') {
             stableCount++;
             if (stableCount >= idleChecks) {
-              return; // Done — scene is idle
+              return;
             }
           } else {
             stableCount = 0;
           }
 
-          lastJson = json;
+          lastHash = hash;
           return cy.wait(pollIntervalMs, { log: false }).then(() => poll());
         });
       }
@@ -173,11 +189,14 @@ export function registerWaiters(): void {
         pollIntervalMs = 200,
       } = options;
 
+      const reporter = _getReporter();
       const bridgeStart = Date.now();
 
-      // Phase 1: wait for bridge to be ready
       function waitForBridge(): Cypress.Chainable<void> {
         if (Date.now() - bridgeStart > bridgeTimeout) {
+          reporter?.logBridgeError(
+            `Timed out after ${bridgeTimeout}ms waiting for bridge`,
+          );
           throw new Error(
             `r3fWaitForObject("${idOrUuid}") timed out after ${bridgeTimeout}ms ` +
             `waiting for the bridge. Ensure <ThreeDom> is mounted inside your <Canvas>.`,
@@ -189,7 +208,6 @@ export function registerWaiters(): void {
           assertBridgeNotErrored(state);
 
           if (state.exists && state.ready) {
-            // Bridge ready — move to phase 2
             return pollForObject();
           }
 
@@ -197,21 +215,32 @@ export function registerWaiters(): void {
         });
       }
 
-      // Phase 2: poll for the specific object
       const objectStart = Date.now();
 
       function pollForObject(): Cypress.Chainable<void> {
         if (Date.now() - objectStart > objectTimeout) {
-          // Build diagnostic info for a helpful error
           return cy.window({ log: false }).then((win) => {
+            const api = (win as Window & { __R3F_DOM__?: R3FDOM }).__R3F_DOM__;
             const state = getBridgeState(win);
-            throw new Error(
-              `r3fWaitForObject("${idOrUuid}") timed out after ${objectTimeout}ms. ` +
+            let msg =
+              `r3fWaitForObject("${idOrUuid}") timed out after ${objectTimeout}ms.\n` +
               `Bridge: ${state.exists ? 'exists' : 'missing'}, ` +
-              `ready: ${state.ready}, ` +
-              `objectCount: ${state.count}. ` +
-              `Is the object rendered with userData.testId="${idOrUuid}" or uuid="${idOrUuid}"?`,
-            );
+              `ready: ${state.ready}, objectCount: ${state.count}.\n` +
+              `Ensure the object has userData.testId="${idOrUuid}" or uuid="${idOrUuid}".`;
+
+            let suggestions: ObjectMetadata[] = [];
+            if (api && typeof api.fuzzyFind === 'function') {
+              suggestions = api.fuzzyFind(idOrUuid, 5);
+              if (suggestions.length > 0) {
+                msg += '\nDid you mean:\n' + suggestions.map((s: ObjectMetadata) => {
+                  const id = s.testId ? `testId="${s.testId}"` : `uuid="${s.uuid}"`;
+                  return `  → ${s.name || '(unnamed)'} [${id}]`;
+                }).join('\n');
+              }
+            }
+
+            reporter?.logObjectNotFound(idOrUuid, suggestions);
+            throw new Error(msg);
           });
         }
 
@@ -221,8 +250,9 @@ export function registerWaiters(): void {
             return cy.wait(pollIntervalMs, { log: false }).then(() => pollForObject());
           }
 
-          const found = (api.getByTestId(idOrUuid) ?? api.getByUuid(idOrUuid)) !== null;
-          if (found) {
+          const meta = api.getByTestId(idOrUuid) ?? api.getByUuid(idOrUuid);
+          if (meta) {
+            reporter?.logObjectFound(idOrUuid, meta.type, meta.name || undefined);
             Cypress.log({
               name: 'r3fWaitForObject',
               message: `"${idOrUuid}" found`,
@@ -257,7 +287,6 @@ export function registerWaiters(): void {
         timeout = 10_000,
       } = options;
 
-      // Collect baseline UUIDs from the current snapshot
       const baselineUuids: string[] = [];
 
       function collectUuids(node: SnapshotNode): void {
@@ -267,7 +296,6 @@ export function registerWaiters(): void {
         }
       }
 
-      // First, capture baseline synchronously from the window
       return cy.window({ log: false }).then((win) => {
         const state = getBridgeState(win);
         assertBridgeNotErrored(state);
@@ -312,7 +340,6 @@ export function registerWaiters(): void {
                   const typeMatch = !filterType || node.type === filterType;
                   const nameMatch = !nameContains || node.name.includes(nameContains);
                   if (typeMatch && nameMatch) {
-                    // Get full metadata from the bridge
                     const meta = bridge.getByUuid(node.uuid);
                     if (meta) {
                       newObjects.push(meta);

@@ -12,6 +12,7 @@ import type {
   WaitForObjectRemovedOptions,
 } from './waiters';
 import * as interactions from './interactions';
+import { R3FReporter } from './reporter';
 
 // ---------------------------------------------------------------------------
 // R3FFixture — the main API object provided to Playwright tests
@@ -21,15 +22,23 @@ import * as interactions from './interactions';
 export interface R3FFixtureOptions {
   /** Auto-enable debug logging (forwards browser [r3f-dom:*] logs to test terminal). */
   debug?: boolean;
+  /**
+   * Enable rich diagnostic reporting in the terminal.
+   * Logs bridge status, scene readiness, interaction details, and
+   * failure context automatically. Default: true.
+   */
+  report?: boolean;
 }
 
 export class R3FFixture {
   private _debugListenerAttached = false;
+  private readonly _reporter: R3FReporter;
 
   constructor(
     private readonly _page: Page,
     opts?: R3FFixtureOptions,
   ) {
+    this._reporter = new R3FReporter(_page, opts?.report !== false);
     if (opts?.debug) {
       this._attachDebugListener();
     }
@@ -38,6 +47,11 @@ export class R3FFixture {
   /** The underlying Playwright Page. */
   get page(): Page {
     return this._page;
+  }
+
+  /** Access the reporter for custom diagnostic logging. */
+  get reporter(): R3FReporter {
+    return this._reporter;
   }
 
   // -----------------------------------------------------------------------
@@ -398,9 +412,22 @@ export class R3FFixture {
   /**
    * Wait until the scene is ready — `window.__R3F_DOM__` is available and
    * the object count has stabilised across several consecutive checks.
+   * Logs bridge connection and scene readiness to the terminal.
    */
   async waitForSceneReady(options?: WaitForSceneReadyOptions): Promise<void> {
-    return waitForSceneReady(this._page, options);
+    this._reporter.logBridgeWaiting();
+    try {
+      await waitForSceneReady(this._page, options);
+      const diag = await this._reporter.fetchDiagnostics();
+      if (diag) {
+        this._reporter.logBridgeConnected(diag);
+        this._reporter.logSceneReady(diag.objectCount);
+      }
+    } catch (e) {
+      const diag = await this._reporter.fetchDiagnostics();
+      if (diag?.error) this._reporter.logBridgeError(diag.error);
+      throw e;
+    }
   }
 
   /**
@@ -412,7 +439,18 @@ export class R3FFixture {
     idOrUuid: string,
     options?: WaitForObjectOptions,
   ): Promise<void> {
-    return waitForObject(this._page, idOrUuid, options);
+    this._reporter.logBridgeWaiting();
+    try {
+      await waitForObject(this._page, idOrUuid, options);
+      const meta = await this.getObject(idOrUuid);
+      if (meta) {
+        this._reporter.logObjectFound(idOrUuid, meta.type, meta.name || undefined);
+      }
+    } catch (e) {
+      const suggestions = await this._reporter.fetchFuzzyMatches(idOrUuid);
+      this._reporter.logObjectNotFound(idOrUuid, suggestions);
+      throw e;
+    }
   }
 
   /**
@@ -465,6 +503,26 @@ export class R3FFixture {
       const api = window.__R3F_DOM__;
       if (api) api.clearSelection();
     });
+  }
+
+  // -----------------------------------------------------------------------
+  // Diagnostics
+  // -----------------------------------------------------------------------
+
+  /**
+   * Fetch full bridge diagnostics (version, object counts, GPU info, etc.).
+   * Returns null if the bridge is not available.
+   */
+  async getDiagnostics(): Promise<import('./reporter').BridgeDiagnostics | null> {
+    return this._reporter.fetchDiagnostics();
+  }
+
+  /**
+   * Print a full diagnostics report to the terminal.
+   * Useful at the start of a test suite or when debugging failures.
+   */
+  async logDiagnostics(): Promise<void> {
+    return this._reporter.logDiagnostics();
   }
 }
 

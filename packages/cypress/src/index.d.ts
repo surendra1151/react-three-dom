@@ -6,48 +6,63 @@
 //   import '@react-three-dom/cypress';
 // ---------------------------------------------------------------------------
 
-import type { ObjectMetadata, ObjectInspection, SceneSnapshot } from './types';
+import type { ObjectMetadata, ObjectInspection, SceneSnapshot, BridgeDiagnostics } from './types';
 import type { SceneDiff } from './diffSnapshots';
 
 declare global {
   namespace Cypress {
     interface Chainable {
-      // ---- Debug ----
+      // ---- Debug / Reporter ----
       /** Enable debug logging. Mirrors [r3f-dom:*] browser logs to Cypress command log. */
       r3fEnableDebug(): Chainable<void>;
+      /**
+       * Enable the R3F reporter for rich terminal output (bridge status, object lookup,
+       * interaction timing, diagnostics). Requires `registerR3FTasks(on)` in cypress.config.ts.
+       */
+      r3fEnableReporter(enabled?: boolean): Chainable<void>;
       /** Log the full scene tree to the Cypress command log and browser console. */
       r3fLogScene(): Chainable<void>;
 
+      // ---- Diagnostics ----
+      /** Get bridge diagnostics (object counts, DOM state, GPU info). */
+      r3fGetDiagnostics(): Chainable<BridgeDiagnostics | null>;
+      /** Log bridge diagnostics to the Cypress command log and browser console. */
+      r3fLogDiagnostics(): Chainable<void>;
+      /** Fuzzy search for objects by partial testId, name, or uuid. */
+      r3fFuzzyFind(query: string, limit?: number): Chainable<ObjectMetadata[]>;
+
       // ---- Interactions ----
-      /** Click a 3D object by testId or uuid. */
+      /** Click a 3D object by testId or uuid. Auto-waits for bridge + object. */
       r3fClick(idOrUuid: string): Chainable<void>;
-      /** Double-click a 3D object by testId or uuid. */
+      /** Double-click a 3D object by testId or uuid. Auto-waits for bridge + object. */
       r3fDoubleClick(idOrUuid: string): Chainable<void>;
-      /** Right-click / context-menu a 3D object by testId or uuid. */
+      /** Right-click / context-menu a 3D object by testId or uuid. Auto-waits for bridge + object. */
       r3fContextMenu(idOrUuid: string): Chainable<void>;
-      /** Hover over a 3D object by testId or uuid. */
+      /** Hover over a 3D object by testId or uuid. Auto-waits for bridge + object. */
       r3fHover(idOrUuid: string): Chainable<void>;
-      /** Drag a 3D object with a world-space delta vector. */
+      /** Drag a 3D object with a world-space delta vector. Auto-waits for bridge + object. */
       r3fDrag(idOrUuid: string, delta: { x: number; y: number; z: number }): Chainable<void>;
-      /** Dispatch a wheel/scroll event on a 3D object. */
+      /** Dispatch a wheel/scroll event on a 3D object. Auto-waits for bridge + object. */
       r3fWheel(idOrUuid: string, options?: { deltaY?: number; deltaX?: number }): Chainable<void>;
-      /** Click empty space to trigger onPointerMissed handlers. */
+      /** Click empty space to trigger onPointerMissed handlers. Auto-waits for bridge. */
       r3fPointerMiss(): Chainable<void>;
-      /** Draw a freeform path on the canvas (for drawing/annotation apps). */
+      /** Draw a freeform path on the canvas (for drawing/annotation apps). Auto-waits for bridge. */
       r3fDrawPath(
         points: Array<{ x: number; y: number; pressure?: number }>,
         options?: { stepDelayMs?: number; pointerType?: 'mouse' | 'pen' | 'touch'; clickAtEnd?: boolean },
       ): Chainable<{ eventCount: number; pointCount: number }>;
 
       // ---- Selection ----
-      /** Select a 3D object (highlights in scene). */
+      /** Select a 3D object (highlights in scene). Auto-waits for bridge + object. */
       r3fSelect(idOrUuid: string): Chainable<void>;
-      /** Clear the current selection. */
+      /** Clear the current selection. Auto-waits for bridge. */
       r3fClearSelection(): Chainable<void>;
 
       // ---- Queries ----
       /** Get object metadata by testId or uuid. */
       r3fGetObject(idOrUuid: string): Chainable<ObjectMetadata | null>;
+      /** Get object metadata by testId. */
+      r3fGetByTestId(testId: string): Chainable<ObjectMetadata | null>;
       /** Get all objects with the given name (object.name). */
       r3fGetByName(name: string): Chainable<ObjectMetadata[]>;
       /** Get object metadata by uuid only. */
@@ -127,8 +142,10 @@ declare global {
       r3fExist(idOrUuid: string): Assertion;
       /** Assert that a 3D object is visible. */
       r3fVisible(idOrUuid: string): Assertion;
-      /** Assert object position within tolerance. */
+      /** Assert object local position within tolerance. */
       r3fPosition(idOrUuid: string, expected: [number, number, number], tolerance?: number): Assertion;
+      /** Assert object world position within tolerance. */
+      r3fWorldPosition(idOrUuid: string, expected: [number, number, number], tolerance?: number): Assertion;
       /** Assert object rotation (Euler radians) within tolerance. */
       r3fRotation(idOrUuid: string, expected: [number, number, number], tolerance?: number): Assertion;
       /** Assert object scale within tolerance. */

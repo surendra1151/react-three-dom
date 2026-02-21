@@ -36,6 +36,10 @@ export type {
   WaitForObjectRemovedOptions,
 } from './waiters';
 
+// Reporter for custom diagnostic logging
+export { R3FReporter } from './reporter';
+export type { BridgeDiagnostics } from './reporter';
+
 // Re-exported types for convenience
 export type {
   ObjectMetadata,

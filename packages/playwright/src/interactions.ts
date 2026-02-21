@@ -57,17 +57,21 @@ async function autoWaitForObject(
     await page.waitForTimeout(AUTO_WAIT_POLL_MS);
   }
 
-  // Final diagnostic
+  // Final diagnostic with fuzzy suggestions
   const finalState = await page.evaluate(
     (id) => {
       const api = window.__R3F_DOM__;
-      if (!api) return { bridge: false, ready: false, count: 0, error: null, found: false };
+      if (!api) return { bridge: false, ready: false, count: 0, error: null, found: false, suggestions: [] as Array<{ testId?: string; name: string; uuid: string }> };
+      const suggestions = typeof api.fuzzyFind === 'function'
+        ? api.fuzzyFind(id, 5).map((m: { testId?: string; name: string; uuid: string }) => ({ testId: m.testId, name: m.name, uuid: m.uuid }))
+        : [];
       return {
         bridge: true,
         ready: api._ready,
         count: api.getCount(),
         error: api._error ?? null,
         found: (api.getByTestId(id) ?? api.getByUuid(id)) !== null,
+        suggestions,
       };
     },
     idOrUuid,
@@ -80,12 +84,21 @@ async function autoWaitForObject(
     );
   }
 
-  throw new Error(
+  let msg =
     `[react-three-dom] Auto-wait timed out after ${timeout}ms: object "${idOrUuid}" not found.\n` +
     `Bridge: ready=${finalState.ready}, objectCount=${finalState.count}` +
     (finalState.error ? `, error=${finalState.error}` : '') + '.\n' +
-    `Ensure the object has userData.testId="${idOrUuid}" or uuid="${idOrUuid}".`,
-  );
+    `Ensure the object has userData.testId="${idOrUuid}" or uuid="${idOrUuid}".`;
+
+  if (finalState.suggestions.length > 0) {
+    msg += '\nDid you mean:\n' +
+      finalState.suggestions.map((s: { testId?: string; name: string; uuid: string }) => {
+        const id = s.testId ? `testId="${s.testId}"` : `uuid="${s.uuid}"`;
+        return `  → ${s.name || '(unnamed)'} [${id}]`;
+      }).join('\n');
+  }
+
+  throw new Error(msg);
 }
 
 /**

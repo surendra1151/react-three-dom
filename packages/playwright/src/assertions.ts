@@ -120,10 +120,50 @@ function parseTol(v: number | Vec3Opts | undefined, def: number) {
   };
 }
 
-function notFound(name: string, id: string, detail: string, timeout: number) {
+async function fetchFuzzyHints(page: Page, query: string): Promise<string> {
+  try {
+    const suggestions = await page.evaluate(
+      ({ q }) => {
+        const api = window.__R3F_DOM__;
+        if (!api || typeof api.fuzzyFind !== 'function') return [];
+        return api.fuzzyFind(q, 5).map((m: { testId?: string; name: string; uuid: string }) => ({
+          testId: m.testId, name: m.name, uuid: m.uuid,
+        }));
+      },
+      { q: query },
+    );
+    if (suggestions.length === 0) return '';
+    return '\nDid you mean:\n' + suggestions.map((s: { testId?: string; name: string; uuid: string }) => {
+      const id = s.testId ? `testId="${s.testId}"` : `uuid="${s.uuid}"`;
+      return `  → ${s.name || '(unnamed)'} [${id}]`;
+    }).join('\n');
+  } catch {
+    return '';
+  }
+}
+
+async function fetchDiagnosticHint(page: Page): Promise<string> {
+  try {
+    const diag = await page.evaluate(() => {
+      const api = window.__R3F_DOM__;
+      if (!api || typeof api.getDiagnostics !== 'function') return null;
+      return api.getDiagnostics();
+    });
+    if (!diag) return '';
+    return `\nBridge: v${diag.version} ready=${diag.ready}, ${diag.objectCount} objects (${diag.meshCount} meshes)`;
+  } catch {
+    return '';
+  }
+}
+
+async function notFoundAsync(page: Page, name: string, id: string, detail: string, timeout: number) {
+  const [fuzzy, diag] = await Promise.all([
+    fetchFuzzyHints(page, id),
+    fetchDiagnosticHint(page),
+  ]);
   return {
     pass: false,
-    message: () => `Expected object "${id}" ${detail}, but it was not found (waited ${timeout}ms)`,
+    message: () => `Expected object "${id}" ${detail}, but it was not found (waited ${timeout}ms)${diag}${fuzzy}`,
     name,
   };
 }
@@ -171,7 +211,7 @@ const r3fMatchers = {
         return meta?.visible ?? false;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toBeVisible', id, 'to be visible', timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toBeVisible', id, 'to be visible', timeout);
     const m = meta as ObjectMetadata;
     return {
       pass: m.visible,
@@ -198,7 +238,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toHavePosition', id, `to have position [${expected}]`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHavePosition', id, `to have position [${expected}]`, timeout);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -225,7 +265,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!worldPos) return notFound('toHaveWorldPosition', id, `to have world position [${expected}]`, timeout);
+    if (!worldPos) return notFoundAsync(r3f.page, 'toHaveWorldPosition', id, `to have world position [${expected}]`, timeout);
     const actualWorldPos: [number, number, number] = worldPos;
     return {
       pass,
@@ -253,7 +293,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toHaveRotation', id, `to have rotation [${expected}]`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveRotation', id, `to have rotation [${expected}]`, timeout);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -280,7 +320,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toHaveScale', id, `to have scale [${expected}]`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveScale', id, `to have scale [${expected}]`, timeout);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -306,7 +346,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toHaveType', id, `to have type "${expectedType}"`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveType', id, `to have type "${expectedType}"`, timeout);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -332,7 +372,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toHaveName', id, `to have name "${expectedName}"`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveName', id, `to have name "${expectedName}"`, timeout);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -358,7 +398,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toHaveGeometryType', id, `to have geometry "${expectedGeo}"`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveGeometryType', id, `to have geometry "${expectedGeo}"`, timeout);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -384,7 +424,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toHaveMaterialType', id, `to have material "${expectedMat}"`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveMaterialType', id, `to have material "${expectedMat}"`, timeout);
     const m = meta as ObjectMetadata;
     return {
       pass,
@@ -410,7 +450,7 @@ const r3fMatchers = {
         return actual === expectedCount;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toHaveChildCount', id, `to have ${expectedCount} children`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveChildCount', id, `to have ${expectedCount} children`, timeout);
     const pass = actual === expectedCount;
     return {
       pass,
@@ -439,7 +479,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toHaveParent', id, `to have parent "${expectedParent}"`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveParent', id, `to have parent "${expectedParent}"`, timeout);
     const m = meta as ObjectMetadata;
     const pm = parentMeta as ObjectMetadata | null;
     const parentLabel = pm?.testId ?? pm?.name ?? m.parentUuid;
@@ -466,7 +506,7 @@ const r3fMatchers = {
         return actual === expectedCount;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toHaveInstanceCount', id, `to have instance count ${expectedCount}`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveInstanceCount', id, `to have instance count ${expectedCount}`, timeout);
     const pass = actual === expectedCount;
     return {
       pass,
@@ -495,7 +535,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFound('toBeInFrustum', id, 'to be in frustum', timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toBeInFrustum', id, 'to be in frustum', timeout);
     const i = insp as ObjectInspection;
     return {
       pass,
@@ -525,7 +565,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFound('toHaveBounds', id, 'to have specific bounds', timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toHaveBounds', id, 'to have specific bounds', timeout);
     const i = insp as ObjectInspection;
     return {
       pass,
@@ -554,7 +594,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFound('toHaveColor', id, `to have color "${norm}"`, timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toHaveColor', id, `to have color "${norm}"`, timeout);
     return {
       pass,
       message: () => pass
@@ -580,7 +620,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFound('toHaveOpacity', id, `to have opacity ${expectedOpacity}`, timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toHaveOpacity', id, `to have opacity ${expectedOpacity}`, timeout);
     return {
       pass,
       message: () => pass
@@ -605,7 +645,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFound('toBeTransparent', id, 'to be transparent', timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toBeTransparent', id, 'to be transparent', timeout);
     const i = insp as ObjectInspection;
     return {
       pass,
@@ -630,7 +670,7 @@ const r3fMatchers = {
         return actual === expectedCount;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toHaveVertexCount', id, `to have ${expectedCount} vertices`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveVertexCount', id, `to have ${expectedCount} vertices`, timeout);
     const pass = actual === expectedCount;
     return {
       pass,
@@ -655,7 +695,7 @@ const r3fMatchers = {
         return actual === expectedCount;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!meta) return notFound('toHaveTriangleCount', id, `to have ${expectedCount} triangles`, timeout);
+    if (!meta) return notFoundAsync(r3f.page, 'toHaveTriangleCount', id, `to have ${expectedCount} triangles`, timeout);
     const pass = actual === expectedCount;
     return {
       pass,
@@ -685,7 +725,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFound('toHaveUserData', id, `to have userData.${key}`, timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toHaveUserData', id, `to have userData.${key}`, timeout);
     return {
       pass,
       message: () => {
@@ -720,7 +760,7 @@ const r3fMatchers = {
         return pass;
       }, { timeout, intervals: [interval] }).toBe(!isNot);
     } catch { /* */ }
-    if (!insp) return notFound('toHaveMapTexture', id, 'to have a map texture', timeout);
+    if (!insp) return notFoundAsync(r3f.page, 'toHaveMapTexture', id, 'to have a map texture', timeout);
     return {
       pass,
       message: () => {

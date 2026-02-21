@@ -4,6 +4,23 @@
 
 import type { ObjectMetadata, ObjectInspection, SceneSnapshot } from './types';
 
+interface BridgeDiagnostics {
+  version: string;
+  ready: boolean;
+  error?: string;
+  objectCount: number;
+  meshCount: number;
+  groupCount: number;
+  lightCount: number;
+  cameraCount: number;
+  materializedDomNodes: number;
+  maxDomNodes: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  webglRenderer: string;
+  dirtyQueueSize: number;
+}
+
 interface R3FDOM {
   _ready: boolean;
   _error?: string;
@@ -34,7 +51,12 @@ interface R3FDOM {
   ): Promise<{ eventCount: number; pointCount: number }>;
   select(idOrUuid: string): void;
   clearSelection(): void;
+  getSelection(): string[];
   getObject3D(idOrUuid: string): unknown;
+  setInspectMode(on: boolean): void;
+  sweepOrphans(): number;
+  getDiagnostics(): BridgeDiagnostics;
+  fuzzyFind(query: string, limit?: number): ObjectMetadata[];
   version: string;
 }
 

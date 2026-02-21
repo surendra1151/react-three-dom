@@ -65,7 +65,7 @@ export function getInspectController(): InspectController | null { return _inspe
 // Global API exposure (window.__R3F_DOM__)
 // ---------------------------------------------------------------------------
 
-function exposeGlobalAPI(store: ObjectStore): void {
+function exposeGlobalAPI(store: ObjectStore, gl: { domElement: HTMLCanvasElement; getContext(): unknown }): void {
   const api: R3FDOM = {
     _ready: true,
     getByTestId: (id: string) => store.getByTestId(id),
@@ -121,6 +121,42 @@ function exposeGlobalAPI(store: ObjectStore): void {
       }
     },
     sweepOrphans: () => store.sweepOrphans(),
+    getDiagnostics: () => ({
+      version,
+      ready: true,
+      objectCount: store.getCount(),
+      meshCount: store.getCountByType('Mesh'),
+      groupCount: store.getCountByType('Group'),
+      lightCount: store.getCountByType('DirectionalLight') + store.getCountByType('PointLight') + store.getCountByType('SpotLight') + store.getCountByType('AmbientLight') + store.getCountByType('HemisphereLight'),
+      cameraCount: store.getCountByType('PerspectiveCamera') + store.getCountByType('OrthographicCamera'),
+      materializedDomNodes: _mirror?.getMaterializedCount() ?? 0,
+      maxDomNodes: _mirror?.getMaxNodes() ?? 0,
+      canvasWidth: gl.domElement.width,
+      canvasHeight: gl.domElement.height,
+      webglRenderer: (() => {
+        try {
+          const ctx = gl.getContext() as WebGLRenderingContext;
+          const dbg = ctx.getExtension('WEBGL_debug_renderer_info');
+          return dbg ? ctx.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'unknown';
+        } catch { return 'unknown'; }
+      })(),
+      dirtyQueueSize: store.getDirtyCount(),
+    }),
+    fuzzyFind: (query: string, limit = 5) => {
+      const q = query.toLowerCase();
+      const results: ObjectMetadata[] = [];
+      for (const obj of store.getFlatList()) {
+        if (results.length >= limit) break;
+        const meta = store.getMetadata(obj);
+        if (!meta) continue;
+        const testId = meta.testId?.toLowerCase() ?? '';
+        const name = meta.name?.toLowerCase() ?? '';
+        if (testId.includes(q) || name.includes(q) || meta.uuid.startsWith(q)) {
+          results.push(meta);
+        }
+      }
+      return results;
+    },
     version,
   };
   window.__R3F_DOM__ = api;
@@ -192,6 +228,23 @@ function createStubBridge(error?: string): R3FDOM {
     getSelectionDisplayTarget: (uuid: string) => uuid,
     setInspectMode: () => {},
     sweepOrphans: () => 0,
+    getDiagnostics: () => ({
+      version,
+      ready: false,
+      error: error ?? undefined,
+      objectCount: 0,
+      meshCount: 0,
+      groupCount: 0,
+      lightCount: 0,
+      cameraCount: 0,
+      materializedDomNodes: 0,
+      maxDomNodes: 0,
+      canvasWidth: 0,
+      canvasHeight: 0,
+      webglRenderer: 'unavailable',
+      dirtyQueueSize: 0,
+    }),
+    fuzzyFind: () => [],
     version,
   };
 }
@@ -322,7 +375,7 @@ export function ThreeDom({
       _highlighter = highlighter;
       _inspectController = inspectController;
 
-      exposeGlobalAPI(store);
+      exposeGlobalAPI(store, gl);
       r3fLog('bridge', 'exposeGlobalAPI called — bridge is live, _ready=true');
       currentApi = window.__R3F_DOM__;
       _store = store;
