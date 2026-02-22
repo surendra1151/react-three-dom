@@ -125,7 +125,7 @@ const features = [
   },
   {
     icon: '##',
-    title: 'BIM-Scale',
+    title: 'Scales Effortlessly',
     description:
       'Two-tier data, amortized sync, LRU eviction. Handles 100k+ objects at ~120 bytes each without blocking the render loop.',
   },
