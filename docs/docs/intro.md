@@ -1,6 +1,26 @@
-# react-three-dom
+---
+sidebar_position: 1
+slug: /
+---
 
-E2E testing and developer tools for [React Three Fiber](https://github.com/pmndrs/react-three-fiber). Mirrors the Three.js scene graph into the DOM so you can test 3D applications with [Playwright](https://playwright.dev) or [Cypress](https://cypress.io), and inspect them in Chrome DevTools.
+# Introduction
+
+**react-three-dom** is an E2E testing and developer tools library for [React Three Fiber](https://github.com/pmndrs/react-three-fiber). It mirrors the Three.js scene graph into the DOM so you can test 3D applications with [Playwright](https://playwright.dev) or [Cypress](https://cypress.io), and inspect them in Chrome DevTools.
+
+## The Problem
+
+Three.js renders to a `<canvas>` — a single opaque pixel buffer. Traditional DOM-based testing tools (Playwright, Cypress, Testing Library) can't see inside it. You're left with screenshot diffing, which is flaky, slow, and tells you nothing about _why_ a test failed.
+
+## The Solution
+
+**react-three-dom** bridges that gap by:
+
+- **Mirroring** every Three.js object as a custom HTML element (`<three-mesh>`, `<three-group>`, etc.) in a hidden, zero-layout DOM container
+- **Exposing** a query/interaction API on `window.__R3F_DOM__` that test frameworks can call via `page.evaluate()`
+- **Providing** first-class Playwright and Cypress SDKs with 27+ assertions, 8 interaction types, and 5 waiter strategies
+- **Shipping** a Chrome DevTools extension for visual scene inspection
+
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -38,57 +58,11 @@ E2E testing and developer tools for [React Three Fiber](https://github.com/pmndr
 | `@react-three-dom/cypress` | Cypress SDK — custom commands, Chai assertions, waiters |
 | `@react-three-dom/devtools` | Chrome DevTools extension — R3F scene inspector tab |
 
-## Quick Start
-
-```bash
-npm install @react-three-dom/core
-npm install -D @react-three-dom/playwright
-```
-
-```tsx
-import { Canvas } from '@react-three/fiber';
-import { ThreeDom } from '@react-three-dom/core';
-
-<Canvas>
-  <ThreeDom />
-  <mesh userData={{ testId: 'hero-cube' }}>
-    <boxGeometry />
-    <meshStandardMaterial color="orange" />
-  </mesh>
-</Canvas>
-```
-
-```ts
-import { test } from '@react-three-dom/playwright';
-import { expect } from '@playwright/test';
-
-test('scene works', async ({ page, r3f }) => {
-  await page.goto('/');
-  await r3f.waitForSceneReady();
-  await expect(r3f).toExist('hero-cube');
-  await expect(r3f).toHaveColor('hero-cube', '#ffa500');
-  await r3f.click('hero-cube');
-});
-```
-
-## Documentation
-
-**[Read the full documentation →](https://krishnakalluri.github.io/react-three-dom/)**
-
-- [Getting Started](https://krishnakalluri.github.io/react-three-dom/docs/getting-started/installation)
-- [API Reference](https://krishnakalluri.github.io/react-three-dom/docs/api-reference/three-dom-component)
-- [Playwright Testing](https://krishnakalluri.github.io/react-three-dom/docs/testing/playwright/setup)
-- [Cypress Testing](https://krishnakalluri.github.io/react-three-dom/docs/testing/cypress/setup)
-- [DevTools Extension](https://krishnakalluri.github.io/react-three-dom/docs/devtools/installation)
-- [Type Reference](https://krishnakalluri.github.io/react-three-dom/docs/types/object-metadata)
-
 ## Requirements
 
 - React 18+
 - Three.js 0.150+
 - @react-three/fiber 8+
 - Node.js 20+
-
-## License
-
-MIT
+- Playwright 1.40+ (for `@react-three-dom/playwright`)
+- Cypress 12+ (for `@react-three-dom/cypress`)

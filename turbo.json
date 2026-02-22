@@ -18,6 +18,13 @@
     "lint": {},
     "clean": {
       "cache": false
+    },
+    "docs:dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "docs:build": {
+      "outputs": ["build/**"]
     }
   }
 }

@@ -1,0 +1,200 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --ifm-color-primary: #7c5cfc;
+  --ifm-color-primary-dark: #6644fb;
+  --ifm-color-primary-darker: #5b38fb;
+  --ifm-color-primary-darkest: #3d12fa;
+  --ifm-color-primary-light: #9274fd;
+  --ifm-color-primary-lighter: #9d82fd;
+  --ifm-color-primary-lightest: #bfb0fe;
+
+  --ifm-font-family-base: 'Inter', system-ui, -apple-system, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', 'Fira Code', monospace;
+  --ifm-code-font-size: 90%;
+  --ifm-heading-font-weight: 700;
+  --ifm-font-weight-bold: 600;
+  --ifm-line-height-base: 1.65;
+  --ifm-border-radius: 10px;
+
+  --docusaurus-highlighted-code-line-bg: rgba(124, 92, 252, 0.1);
+
+  --r3d-glow: rgba(124, 92, 252, 0.35);
+  --r3d-surface: rgba(255, 255, 255, 0.06);
+  --r3d-border: rgba(124, 92, 252, 0.15);
+  --r3d-gradient-start: #7c5cfc;
+  --r3d-gradient-end: #00d4ff;
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #9b82fc;
+  --ifm-color-primary-dark: #8268fb;
+  --ifm-color-primary-darker: #755bfb;
+  --ifm-color-primary-darkest: #4e2efa;
+  --ifm-color-primary-light: #b49cfd;
+  --ifm-color-primary-lighter: #c1abfd;
+  --ifm-color-primary-lightest: #e0d5fe;
+
+  --ifm-background-color: #0a0a0f;
+  --ifm-background-surface-color: #111118;
+  --ifm-navbar-background-color: rgba(10, 10, 15, 0.85);
+  --ifm-footer-background-color: #08080c;
+
+  --docusaurus-highlighted-code-line-bg: rgba(155, 130, 252, 0.15);
+
+  --r3d-glow: rgba(155, 130, 252, 0.25);
+  --r3d-surface: rgba(255, 255, 255, 0.04);
+  --r3d-border: rgba(155, 130, 252, 0.12);
+}
+
+/* Navbar glass effect */
+.navbar {
+  backdrop-filter: saturate(180%) blur(16px);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  border-bottom: 1px solid var(--r3d-border);
+  box-shadow: none;
+}
+
+.navbar__title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Code blocks */
+.prism-code {
+  border-radius: 12px !important;
+  border: 1px solid var(--r3d-border) !important;
+  font-size: 0.95rem !important;
+  padding: 1.25rem 1.5rem !important;
+  line-height: 1.7 !important;
+}
+
+[data-theme='dark'] .prism-code {
+  background: #0d0d14 !important;
+}
+
+/* Bash / install commands */
+div[class*='language-bash'] .prism-code,
+div[class*='language-sh'] .prism-code {
+  font-size: 0.95rem !important;
+  padding: 1rem 1.4rem !important;
+}
+
+/* Copy button fix */
+.copyButtonCopied_node_modules-\@docusaurus-theme-classic-lib-theme-CodeBlock-CopyButton-styles-module,
+button[class*='copyButton'] {
+  border-radius: 8px !important;
+  width: 36px !important;
+  height: 36px !important;
+  opacity: 0.4;
+  transition: all 0.2s ease !important;
+  background: var(--r3d-surface) !important;
+  border: 1px solid var(--r3d-border) !important;
+}
+
+button[class*='copyButton']:hover {
+  opacity: 1;
+  background: rgba(155, 130, 252, 0.1) !important;
+  border-color: rgba(155, 130, 252, 0.3) !important;
+}
+
+button[class*='copyButton'] svg {
+  width: 16px;
+  height: 16px;
+}
+
+code {
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-weight: 500;
+}
+
+/* Sidebar */
+.menu__link {
+  border-radius: 8px;
+  font-size: 0.9rem;
+  transition: all 0.15s ease;
+}
+
+.menu__link--active:not(.menu__link--sublist) {
+  background: var(--ifm-color-primary) !important;
+  color: #fff !important;
+  font-weight: 600;
+}
+
+/* Table styling */
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--r3d-border);
+}
+
+table th {
+  background: var(--r3d-surface);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+
+table td,
+table th {
+  border-color: var(--r3d-border);
+}
+
+/* Footer */
+.footer {
+  border-top: 1px solid var(--r3d-border);
+  padding: 1rem 0 !important;
+}
+
+.footer .footer__copyright {
+  margin: 0;
+  padding: 0;
+  font-size: 0.8rem;
+  opacity: 0.5;
+}
+
+.footer__title {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  opacity: 0.6;
+}
+
+/* Smooth transitions everywhere */
+* {
+  transition-property: background-color, border-color, box-shadow;
+  transition-duration: 0.15s;
+  transition-timing-function: ease;
+}
+
+/* Markdown content spacing */
+.markdown h2 {
+  margin-top: 2.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--r3d-border);
+}
+
+.markdown h3 {
+  margin-top: 2rem;
+}
+
+/* Pagination */
+.pagination-nav__link {
+  border-radius: 12px;
+  border: 1px solid var(--r3d-border);
+  transition: all 0.2s ease;
+}
+
+.pagination-nav__link:hover {
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 0 20px var(--r3d-glow);
+}
