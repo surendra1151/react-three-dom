@@ -1,6 +1,6 @@
 {
   "name": "@react-three-dom/core",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "DOM mirror, snapshot API, and interaction bridge for React Three Fiber",
   "type": "module",
   "main": "./dist/index.cjs",
