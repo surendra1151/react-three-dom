@@ -1,48 +1,18 @@
 # react-three-dom
 
-E2E testing and developer tools for [React Three Fiber](https://github.com/pmndrs/react-three-fiber). Mirrors the Three.js scene graph into the DOM so you can test 3D applications with [Playwright](https://playwright.dev) or [Cypress](https://cypress.io), and inspect them in Chrome DevTools.
+E2E testing and developer tools for [React Three Fiber](https://github.com/pmndrs/react-three-fiber). Mirrors the Three.js scene graph into the DOM so you can test 3D applications with [Playwright](https://playwright.dev) or [Cypress](https://cypress.io), and inspect them with a [Chrome DevTools extension](https://chromewebstore.google.com/detail/react-three-dom/knmbpbojmdgjgjijbepkmgpdklndlfkn).
 
-```
-┌─────────────────────────────────────────────────┐
-│  R3F Canvas                                     │
-│  ┌───────────────────────────────────────────┐  │
-│  │ Three.js Scene Graph                      │  │
-│  │  Scene                                    │  │
-│  │   ├─ Group "building"                     │  │
-│  │   │   ├─ Mesh "wall-1"                    │  │
-│  │   │   └─ Mesh "floor"                     │  │
-│  │   └─ PerspectiveCamera                    │  │
-│  └───────────────────────────────────────────┘  │
-│                    ↕ sync                        │
-│  ┌───────────────────────────────────────────┐  │
-│  │ DOM Mirror (hidden, zero-layout)          │  │
-│  │  <three-scene>                            │  │
-│  │   ├─ <three-group data-name="building">   │  │
-│  │   │   ├─ <three-mesh data-name="wall-1">  │  │
-│  │   │   └─ <three-mesh data-name="floor">   │  │
-│  │   └─ <three-camera>                       │  │
-│  └───────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────┘
-         ↕ window.__R3F_DOM__
-┌─────────────────────────────────────────────────┐
-│  Playwright / Cypress / DevTools Extension      │
-└─────────────────────────────────────────────────┘
-```
+Three.js renders everything to a `<canvas>` — invisible to traditional DOM-based testing and inspection tools. **react-three-dom** bridges that gap by mirroring every Three.js object as a custom HTML element, exposing a query/interaction API for test frameworks, and shipping a DevTools extension for visual scene inspection.
 
-## Packages
+## Documentation
 
-| Package | Description |
-|---------|-------------|
-| `@react-three-dom/core` | Bridge component, scene mirror, object store, interaction engine |
-| `@react-three-dom/playwright` | Playwright SDK — fixture, 27+ matchers, waiters, reporter |
-| `@react-three-dom/cypress` | Cypress SDK — custom commands, Chai assertions, waiters |
-| `@react-three-dom/devtools` | Chrome DevTools extension — R3F scene inspector tab |
+**[surendra1151.github.io/react-three-dom](https://surendra1151.github.io/react-three-dom/)**
 
 ## Quick Start
 
 ```bash
 npm install @react-three-dom/core
-npm install -D @react-three-dom/playwright
+npm install -D @react-three-dom/playwright   # or @react-three-dom/cypress
 ```
 
 ```tsx
@@ -71,23 +41,14 @@ test('scene works', async ({ page, r3f }) => {
 });
 ```
 
-## Documentation
+## Packages
 
-**[Read the full documentation →](https://krishnakalluri.github.io/react-three-dom/)**
-
-- [Getting Started](https://krishnakalluri.github.io/react-three-dom/docs/getting-started/installation)
-- [API Reference](https://krishnakalluri.github.io/react-three-dom/docs/api-reference/three-dom-component)
-- [Playwright Testing](https://krishnakalluri.github.io/react-three-dom/docs/testing/playwright/setup)
-- [Cypress Testing](https://krishnakalluri.github.io/react-three-dom/docs/testing/cypress/setup)
-- [DevTools Extension](https://krishnakalluri.github.io/react-three-dom/docs/devtools/installation)
-- [Type Reference](https://krishnakalluri.github.io/react-three-dom/docs/types/object-metadata)
-
-## Requirements
-
-- React 18+
-- Three.js 0.150+
-- @react-three/fiber 8+
-- Node.js 20+
+| Package | Description |
+|---------|-------------|
+| `@react-three-dom/core` | Bridge component, scene mirror, object store, interaction engine |
+| `@react-three-dom/playwright` | Playwright SDK — fixture, 27+ matchers, waiters, reporter |
+| `@react-three-dom/cypress` | Cypress SDK — custom commands, Chai assertions, waiters |
+| `@react-three-dom/devtools` | [Chrome DevTools extension](https://chromewebstore.google.com/detail/react-three-dom/knmbpbojmdgjgjijbepkmgpdklndlfkn) — R3F scene inspector tab |
 
 ## License
 
