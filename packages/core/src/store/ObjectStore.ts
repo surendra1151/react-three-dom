@@ -498,6 +498,7 @@ export class ObjectStore {
     this._flatListDirty = true;
 
     delete obj.userData.__r3fdom_tracked;
+    delete obj.userData.__r3fdom_manual;
 
     if (meta.testId) {
       this._objectsByTestId.delete(meta.testId);
@@ -522,6 +523,11 @@ export class ObjectStore {
   /**
    * Unregister an entire subtree (object + all descendants).
    */
+  /** Mark a root as tracked without traversing/registering its children. */
+  addTrackedRoot(root: Object3D): void {
+    this._trackedRoots.add(root);
+  }
+
   unregisterTree(root: Object3D): void {
     root.traverse((obj) => {
       this.unregister(obj);

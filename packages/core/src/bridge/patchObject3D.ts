@@ -2,6 +2,7 @@ import { Object3D } from 'three';
 import type { ObjectStore } from '../store/ObjectStore';
 import type { DomMirror } from '../mirror/DomMirror';
 import { r3fLog } from '../debug';
+import { shouldRegister } from './ThreeDom';
 
 // ---------------------------------------------------------------------------
 // Object3D.add / Object3D.remove monkey-patch
@@ -22,7 +23,7 @@ let _originalAdd: typeof Object3D.prototype.add | null = null;
 let _originalRemove: typeof Object3D.prototype.remove | null = null;
 
 /** Active store/mirror pairs (supports multiple tracked scenes). */
-const _activePairs: Array<{ store: ObjectStore; mirror: DomMirror }> = [];
+const _activePairs: Array<{ store: ObjectStore; mirror: DomMirror; instanceKey: string }> = [];
 
 /**
  * Find the store/mirror pair that tracks the scene containing this object.
@@ -30,7 +31,7 @@ const _activePairs: Array<{ store: ObjectStore; mirror: DomMirror }> = [];
  */
 function findTrackingPair(
   obj: Object3D,
-): { store: ObjectStore; mirror: DomMirror } | null {
+): { store: ObjectStore; mirror: DomMirror; instanceKey: string } | null {
   for (const pair of _activePairs) {
     if (pair.store.isInTrackedScene(obj)) {
       return pair;
@@ -41,14 +42,16 @@ function findTrackingPair(
 
 /**
  * Register an object and all its descendants into the store and mirror.
+ * Respects the mode/filter settings for the instance.
  */
 function registerSubtree(
   obj: Object3D,
   store: ObjectStore,
   mirror: DomMirror,
+  instanceKey: string,
 ): void {
   obj.traverse((child) => {
-    if (!store.has(child)) {
+    if (!store.has(child) && shouldRegister(instanceKey, child)) {
       store.register(child);
       mirror.onObjectAdded(child);
     }
@@ -66,9 +69,10 @@ function registerSubtree(
 export function patchObject3D(
   store: ObjectStore,
   mirror: DomMirror,
+  instanceKey = '',
 ): () => void {
   // Register this store/mirror pair
-  _activePairs.push({ store, mirror });
+  _activePairs.push({ store, mirror, instanceKey });
 
   // Only patch the prototype once (supports multiple store/mirror pairs)
   if (!_patched) {
@@ -91,7 +95,7 @@ export function patchObject3D(
           if (obj === this) continue;
           try {
             r3fLog('patch', `patchedAdd: "${obj.name || obj.type}" added to "${this.name || this.type}"`);
-            registerSubtree(obj, pair.store, pair.mirror);
+            registerSubtree(obj, pair.store, pair.mirror, pair.instanceKey);
           } catch (err) {
             r3fLog('patch', `patchedAdd: failed to register "${obj.name || obj.type}"`, err);
           }

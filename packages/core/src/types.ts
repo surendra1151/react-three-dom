@@ -256,6 +256,19 @@ export interface R3FDOM {
   getInspectMode(): boolean;
 
   /**
+   * Manually register a Three.js object (and materialize its mirror DOM node).
+   * Useful in `manual` mode or to add specific objects in `auto` mode that
+   * were excluded by a filter.
+   */
+  r3fRegister(obj: Object3D): void;
+
+  /**
+   * Unregister a previously registered object and its descendants.
+   * Removes the mirror DOM node and store entry.
+   */
+  r3fUnregister(obj: Object3D): void;
+
+  /**
    * Manually sweep orphaned objects from the store.
    * Removes objects that are no longer in any tracked scene graph.
    * Runs automatically every ~30s, but can be called after large

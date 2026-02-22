@@ -120,7 +120,7 @@ export class InspectController {
     r3fLog('inspect', 'Inspect mode enabled — hover to highlight, click to select');
   }
 
-  /** Deactivate inspect mode — removes overlay and clears hover state. */
+  /** Deactivate inspect mode — removes overlay and clears all inspect state. */
   disable(): void {
     if (!this._active) return;
     this._active = false;

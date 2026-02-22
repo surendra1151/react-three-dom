@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { Vector3 } from 'three';
-import type { Scene, Camera } from 'three';
+import type { Object3D, Scene, Camera } from 'three';
 import { ObjectStore } from '../store/ObjectStore';
 import { DomMirror } from '../mirror/DomMirror';
 import { ensureCustomElements } from '../mirror/CustomElements';
@@ -41,6 +41,19 @@ export interface ThreeDomProps {
    * Default: true when canvasId is omitted, false otherwise.
    */
   primary?: boolean;
+  /**
+   * Registration mode:
+   * - "auto" (default): traverses and registers all objects in the scene.
+   * - "manual": nothing is auto-registered. Use `useR3FRegister` hook or
+   *   `__R3F_DOM__.r3fRegister()` to add objects explicitly.
+   */
+  mode?: 'auto' | 'manual';
+  /**
+   * Filter function for auto mode. Only objects that pass the filter are
+   * registered. Ignored in manual mode.
+   * Example: `filter={(obj) => !!obj.userData.testId}`
+   */
+  filter?: (obj: Object3D) => boolean;
   /** CSS selector or HTMLElement for the mirror DOM root. Default: "#three-dom-root" */
   root?: string | HTMLElement;
   /** Objects to process per amortized batch per frame. Default: 500 */
@@ -68,6 +81,17 @@ const _mirrors = new Map<string, DomMirror>();
 const _selectionManagers = new Map<string, SelectionManager>();
 const _highlighters = new Map<string, Highlighter>();
 const _inspectControllers = new Map<string, InspectController>();
+const _filters = new Map<string, ((obj: Object3D) => boolean) | null>();
+const _modes = new Map<string, 'auto' | 'manual'>();
+
+/** Check if an object passes the filter for a given instance. */
+export function shouldRegister(instanceKey: string, obj: Object3D): boolean {
+  const mode = _modes.get(instanceKey);
+  if (mode === 'manual') return false;
+  const filter = _filters.get(instanceKey);
+  if (filter) return filter(obj);
+  return true;
+}
 
 /** Get the store for a canvas instance. Default: primary ('') instance. */
 export function getStore(canvasId = ''): ObjectStore | null { return _stores.get(canvasId) ?? null; }
@@ -211,6 +235,32 @@ function exposeGlobalAPI(
       }
       return state;
     },
+    r3fRegister: (obj) => {
+      if (store.has(obj)) return;
+      if (!store.isInTrackedScene(obj)) {
+        console.warn(
+          `[react-three-dom] r3fRegister: object "${obj.userData?.testId || obj.name || obj.uuid.slice(0, 8)}" is not in a tracked scene. ` +
+          `Add it to the scene graph first.`,
+        );
+        return;
+      }
+      obj.userData.__r3fdom_manual = true;
+      store.register(obj);
+      mirror?.onObjectAdded(obj);
+      mirror?.materialize(obj.uuid);
+      r3fLog('bridge', `r3fRegister: "${obj.userData?.testId || obj.name || obj.uuid.slice(0, 8)}" (${obj.type})`);
+    },
+    r3fUnregister: (obj) => {
+      if (!store.has(obj)) return;
+      if (!obj.userData?.__r3fdom_manual) {
+        r3fLog('bridge', `r3fUnregister skipped — "${obj.userData?.testId || obj.name || obj.uuid.slice(0, 8)}" was auto-registered`);
+        return;
+      }
+      delete obj.userData.__r3fdom_manual;
+      mirror?.onObjectRemoved(obj);
+      obj.traverse((child) => store.unregister(child));
+      r3fLog('bridge', `r3fUnregister: "${obj.userData?.testId || obj.name || obj.uuid.slice(0, 8)}" (${obj.type})`);
+    },
     fuzzyFind: (query: string, limit = 5) => {
       const q = query.toLowerCase();
       const results: ObjectMetadata[] = [];
@@ -326,6 +376,8 @@ function createStubBridge(error?: string, canvasId?: string): R3FDOM {
     getSelectionDisplayTarget: (uuid: string) => uuid,
     setInspectMode: () => {},
     getInspectMode: () => false,
+    r3fRegister: () => {},
+    r3fUnregister: () => {},
     sweepOrphans: () => 0,
     getDiagnostics: () => ({
       version,
@@ -365,6 +417,8 @@ export function ThreeDom({
   canvasId,
   primary,
   root = '#three-dom-root',
+  mode = 'auto',
+  filter,
   batchSize = 500,
   syncBudgetMs = 0.5,
   maxDomNodes = 2000,
@@ -460,30 +514,53 @@ export function ThreeDom({
 
       ensureCustomElements(store);
 
+      // Store mode/filter so patchObject3D can check them
+      _modes.set(instanceKey, mode);
+      _filters.set(instanceKey, filter ?? null);
+
       // Install patch BEFORE async registration so any objects added to the
       // scene while registration is in progress are caught by the patch.
-      unpatch = patchObject3D(store, mirror);
+      unpatch = patchObject3D(store, mirror, instanceKey);
       setInteractionState(store, camera, gl, size);
-      r3fLog('setup', 'Object3D patched, interaction state set');
+      r3fLog('setup', `Object3D patched (mode=${mode}), interaction state set`);
 
-      // Register the full tree synchronously first so that materializeSubtree
-      // can resolve children. Then kick off async registration for any objects
-      // added later (caught by the Object3D.add patch).
-      store.registerTree(scene);
+      if (mode === 'auto') {
+        // Register the full tree synchronously first so that materializeSubtree
+        // can resolve children. Then kick off async registration for any objects
+        // added later (caught by the Object3D.add patch).
+        if (filter) {
+          store!.addTrackedRoot(scene);
+          scene.traverse((obj) => {
+            if (filter(obj)) {
+              store!.register(obj);
+              mirror!.onObjectAdded(obj);
+            }
+          });
+        } else {
+          store.registerTree(scene);
+        }
 
-      // R3F's default camera lives outside the scene graph (managed by the
-      // fiber store, not added as a scene child). Register it explicitly so
-      // it appears as <three-camera> in the DOM and DevTools, nested under
-      // the scene element.
-      if (!store.has(camera)) {
-        const camMeta = store.register(camera);
-        camMeta.parentUuid = scene.uuid;
-        mirror.materialize(camera.uuid);
+        // R3F's default camera lives outside the scene graph (managed by the
+        // fiber store, not added as a scene child). Register it explicitly so
+        // it appears as <three-camera> in the DOM and DevTools, nested under
+        // the scene element.
+        if (!store.has(camera)) {
+          const camMeta = store.register(camera);
+          camMeta.parentUuid = scene.uuid;
+          mirror.materialize(camera.uuid);
+        }
+
+        mirror.materializeSubtree(scene.uuid, initialDepth);
+        if (!filter) {
+          cancelAsyncReg = store.registerTreeAsync(scene);
+        }
+      } else {
+        // Manual mode: only register the scene root so the mirror has a container
+        store.addTrackedRoot(scene);
+        store.register(scene);
+        mirror.onObjectAdded(scene);
       }
-
-      mirror.materializeSubtree(scene.uuid, initialDepth);
-      cancelAsyncReg = store.registerTreeAsync(scene);
-      r3fLog('setup', `Scene registered: ${store.getCount()} objects, async watcher started`);
+      r3fLog('setup', `Scene registered (mode=${mode}): ${store.getCount()} objects`);
 
       // ---- Selection, highlighting, and inspect controller ----
       selectionManager = new SelectionManager();
@@ -566,6 +643,8 @@ export function ThreeDom({
       _selectionManagers.delete(instanceKey);
       _highlighters.delete(instanceKey);
       _inspectControllers.delete(instanceKey);
+      _modes.delete(instanceKey);
+      _filters.delete(instanceKey);
       if (debug) enableDebug(false);
       r3fLog('setup', 'ThreeDom cleanup complete');
     };

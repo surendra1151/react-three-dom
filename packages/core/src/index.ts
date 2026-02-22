@@ -158,6 +158,12 @@ export { resolveObject } from './interactions/resolve';
 // Highlight / selection
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Hooks
+// ---------------------------------------------------------------------------
+
+export { useR3FRegister } from './hooks/useR3FRegister';
+
 export {
   Highlighter,
   type HighlighterOptions,
