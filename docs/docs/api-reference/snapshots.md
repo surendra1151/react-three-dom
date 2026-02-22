@@ -20,7 +20,7 @@ cy.r3fSnapshot().then((snapshot) => {
 });
 ```
 
-A snapshot captures every object's Tier 1 metadata in a recursive tree structure. See [SceneSnapshot type reference](../types/scene-snapshot.md) for the full shape.
+A snapshot captures every object's Tier 1 metadata in a recursive tree structure.
 
 ## Diffing Snapshots
 
