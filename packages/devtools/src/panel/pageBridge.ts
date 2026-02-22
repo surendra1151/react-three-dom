@@ -167,6 +167,13 @@ export function setInspectMode(on: boolean): Promise<void> {
   ).then(() => undefined);
 }
 
+/** Read the current inspect mode state from the bridge. */
+export function getInspectMode(): Promise<boolean> {
+  return evalInPage<boolean>(
+    `(function(){ var api = ${apiExpr()}; return !!(api && api.getInspectMode && api.getInspectMode()); })()`
+  ).catch(() => false);
+}
+
 /**
  * Flatten snapshot tree to array of ObjectMetadata (with parentUuid, childrenUuids).
  */

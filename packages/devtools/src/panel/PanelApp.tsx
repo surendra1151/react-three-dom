@@ -18,6 +18,7 @@ import {
   select,
   inspect,
   setInspectMode,
+  getInspectMode,
   flattenSnapshotTree,
   getCanvasIds,
   setTargetCanvas,
@@ -273,6 +274,19 @@ export function PanelApp() {
     tick();
     const id = setInterval(tick, SELECTION_POLL_MS);
     return () => clearInterval(id);
+  }, [ready]);
+
+  // Sync inspect mode state from the bridge (auto-enable may have turned it on)
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    const tick = async () => {
+      const on = await getInspectMode();
+      if (!cancelled) setInspectModeOn(on);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => { cancelled = true; clearInterval(id); };
   }, [ready]);
 
   // Inspect selected object (only show result when it matches current selection — avoids stale/wrong details)

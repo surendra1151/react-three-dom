@@ -252,6 +252,9 @@ export interface R3FDOM {
    */
   setInspectMode(on: boolean): void;
 
+  /** Returns true if inspect mode is currently active. */
+  getInspectMode(): boolean;
+
   /**
    * Manually sweep orphaned objects from the store.
    * Removes objects that are no longer in any tracked scene graph.

@@ -11,31 +11,7 @@ chrome.devtools.panels.create(
   }
 );
 
-// ---------------------------------------------------------------------------
-// Auto-enable inspect mode when DevTools opens so the canvas crosshair and
-// raycasting are always active. This makes Chrome's inspect pointer (Ctrl+Shift+C)
-// work — hovering the canvas shows 3D highlights, clicking selects objects.
-// ---------------------------------------------------------------------------
-
-(function autoEnableInspect() {
-  function tryEnable() {
-    chrome.devtools.inspectedWindow.eval(
-      "(function() {" +
-      "  if (window.__R3F_DOM__ && window.__R3F_DOM__._ready && window.__R3F_DOM__.setInspectMode) {" +
-      "    window.__R3F_DOM__.setInspectMode(true);" +
-      "    return true;" +
-      "  }" +
-      "  return false;" +
-      "})()",
-      function (enabled) {
-        if (!enabled) {
-          setTimeout(tryEnable, 500);
-        }
-      }
-    );
-  }
-  tryEnable();
-})();
+// Inspect mode is OFF by default — user must click the toggle in the R3F panel.
 
 // ---------------------------------------------------------------------------
 // Direction 1: Elements tab → Scene (hover highlight)

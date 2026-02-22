@@ -1,11 +1,13 @@
 /**
  * @module InspectController
  *
- * Chrome DevTools-style inspect mode for 3D scenes. When enabled, intercepts
- * mousemove/click on the WebGL canvas, raycasts to identify the object under
- * the cursor, drives hover/selection highlights, and sets a global reference
- * so the DevTools extension can reveal the corresponding mirror DOM node.
- * Zero overhead when disabled — no listeners attached.
+ * Chrome DevTools-style inspect mode for 3D scenes. When enabled, places a
+ * transparent overlay on top of the WebGL canvas that intercepts all pointer
+ * events (preventing R3F's event system and camera controls from consuming
+ * them), raycasts to identify the object under the cursor, drives
+ * hover/selection highlights, and sets a global reference so the DevTools
+ * extension can reveal the corresponding mirror DOM node.
+ * Zero overhead when disabled — no overlay, no listeners.
  */
 import {
   Object3D,
@@ -19,24 +21,11 @@ import type { DomMirror } from '../mirror/DomMirror';
 import { resolveSelectionDisplayTarget } from './selectionDisplayTarget';
 import { r3fLog } from '../debug';
 
-// ---------------------------------------------------------------------------
-// InspectController
-//
-// When inspect mode is enabled, intercepts mousemove/click on the WebGL
-// canvas and uses raycasting to identify the frontmost 3D object under the
-// cursor. Drives the Highlighter for hover/selection visuals and sets
-// window.__r3fdom_selected_element__ so the DevTools extension can reveal
-// the corresponding mirror DOM node in the Elements tab.
-//
-// When inspect mode is disabled, zero listeners are attached to the canvas
-// and the user's application is completely untouched.
-// ---------------------------------------------------------------------------
-
 const RAYCAST_THROTTLE_MS = 50;
 const HOVER_REVEAL_DEBOUNCE_MS = 300;
 
 /**
- * Manages the inspect-mode lifecycle: attaches/detaches canvas event listeners,
+ * Manages the inspect-mode lifecycle: creates/removes an overlay div,
  * throttles raycasts, and coordinates Highlighter + SelectionManager + DomMirror.
  */
 export class InspectController {
@@ -53,11 +42,10 @@ export class InspectController {
   private _hoveredObject: Object3D | null = null;
   private _hoverRevealTimer: ReturnType<typeof setTimeout> | null = null;
 
-  private _boundMouseMove: ((e: MouseEvent) => void) | null = null;
-  private _boundClick: ((e: MouseEvent) => void) | null = null;
+  private _overlay: HTMLDivElement | null = null;
+  private _boundPointerMove: ((e: PointerEvent) => void) | null = null;
+  private _boundPointerDown: ((e: PointerEvent) => void) | null = null;
   private _boundContextMenu: ((e: MouseEvent) => void) | null = null;
-
-  private _savedCursor = '';
 
   constructor(opts: {
     camera: Camera;
@@ -90,40 +78,63 @@ export class InspectController {
   // Enable / disable
   // -----------------------------------------------------------------------
 
-  /** Activate inspect mode — attaches canvas listeners and sets crosshair cursor. */
+  /** Activate inspect mode — creates overlay on top of canvas. */
   enable(): void {
     if (this._active) return;
     this._active = true;
 
     const canvas = this._renderer.domElement;
-    this._savedCursor = canvas.style.cursor;
-    canvas.style.cursor = 'crosshair';
+    const parent = canvas.parentElement;
+    if (!parent) return;
 
-    this._boundMouseMove = this._onMouseMove.bind(this);
-    this._boundClick = this._onClick.bind(this);
+    // Create a transparent overlay that sits on top of the canvas and
+    // intercepts all pointer events, preventing R3F's event system and
+    // camera controls (OrbitControls etc.) from consuming them.
+    const overlay = document.createElement('div');
+    overlay.dataset.r3fdomInspect = 'true';
+    overlay.style.cssText = [
+      'position:absolute',
+      'inset:0',
+      'z-index:999999',
+      'cursor:crosshair',
+      'background:transparent',
+    ].join(';');
+
+    // Ensure parent is positioned so absolute overlay works
+    const parentPos = getComputedStyle(parent).position;
+    if (parentPos === 'static') {
+      parent.style.position = 'relative';
+    }
+
+    this._boundPointerMove = this._onPointerMove.bind(this);
+    this._boundPointerDown = this._onPointerDown.bind(this);
     this._boundContextMenu = (e: MouseEvent) => e.preventDefault();
 
-    canvas.addEventListener('mousemove', this._boundMouseMove);
-    canvas.addEventListener('click', this._boundClick);
-    canvas.addEventListener('contextmenu', this._boundContextMenu);
+    overlay.addEventListener('pointermove', this._boundPointerMove);
+    overlay.addEventListener('pointerdown', this._boundPointerDown);
+    overlay.addEventListener('contextmenu', this._boundContextMenu);
+
+    parent.appendChild(overlay);
+    this._overlay = overlay;
 
     r3fLog('inspect', 'Inspect mode enabled — hover to highlight, click to select');
   }
 
-  /** Deactivate inspect mode — removes all canvas listeners and clears hover state. */
+  /** Deactivate inspect mode — removes overlay and clears hover state. */
   disable(): void {
     if (!this._active) return;
     this._active = false;
 
-    const canvas = this._renderer.domElement;
-    canvas.style.cursor = this._savedCursor;
+    if (this._overlay) {
+      if (this._boundPointerMove) this._overlay.removeEventListener('pointermove', this._boundPointerMove);
+      if (this._boundPointerDown) this._overlay.removeEventListener('pointerdown', this._boundPointerDown);
+      if (this._boundContextMenu) this._overlay.removeEventListener('contextmenu', this._boundContextMenu);
+      this._overlay.remove();
+      this._overlay = null;
+    }
 
-    if (this._boundMouseMove) canvas.removeEventListener('mousemove', this._boundMouseMove);
-    if (this._boundClick) canvas.removeEventListener('click', this._boundClick);
-    if (this._boundContextMenu) canvas.removeEventListener('contextmenu', this._boundContextMenu);
-
-    this._boundMouseMove = null;
-    this._boundClick = null;
+    this._boundPointerMove = null;
+    this._boundPointerDown = null;
     this._boundContextMenu = null;
 
     this._hoveredObject = null;
@@ -144,7 +155,7 @@ export class InspectController {
   // Raycasting (delegated to RaycastAccelerator)
   // -----------------------------------------------------------------------
 
-  private _raycastAtMouse(e: MouseEvent): Object3D | null {
+  private _raycastFromEvent(e: MouseEvent): Object3D | null {
     return this._raycastAccelerator.raycastAtMouse(
       e,
       this._camera,
@@ -169,12 +180,15 @@ export class InspectController {
   // Event handlers
   // -----------------------------------------------------------------------
 
-  private _onMouseMove(e: MouseEvent): void {
+  private _onPointerMove(e: PointerEvent): void {
+    e.stopPropagation();
+    e.preventDefault();
+
     const now = performance.now();
     if (now - this._lastRaycastTime < RAYCAST_THROTTLE_MS) return;
     this._lastRaycastTime = now;
 
-    const hit = this._raycastAtMouse(e);
+    const hit = this._raycastFromEvent(e);
 
     if (!hit) {
       if (this._hoveredObject) {
@@ -185,7 +199,6 @@ export class InspectController {
       return;
     }
 
-    // Use the exact mesh under the cursor — no group promotion on hover
     if (hit === this._hoveredObject) return;
 
     this._hoveredObject = hit;
@@ -195,8 +208,7 @@ export class InspectController {
 
   /**
    * After hovering an object for HOVER_REVEAL_DEBOUNCE_MS, auto-reveal its
-   * mirror element in the Elements tab. This gives the user a Chrome-picker-like
-   * experience: hover over a 3D object → Elements tab scrolls to it.
+   * mirror element in the Elements tab.
    */
   private _scheduleHoverReveal(target: Object3D): void {
     this._cancelHoverReveal();
@@ -215,11 +227,11 @@ export class InspectController {
     }
   }
 
-  private _onClick(e: MouseEvent): void {
+  private _onPointerDown(e: PointerEvent): void {
     e.stopPropagation();
+    e.preventDefault();
 
-    // Force a fresh raycast on click (ignore throttle)
-    const hit = this._raycastAtMouse(e);
+    const hit = this._raycastFromEvent(e);
 
     if (!hit) {
       this._selectionManager.clearSelection();

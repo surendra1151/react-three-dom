@@ -146,11 +146,18 @@ function exposeGlobalAPI(
       resolveSelectionDisplayTarget((id) => store.getObject3D(id), uuid) ?? uuid,
     setInspectMode: (on: boolean) => {
       r3fLog('inspect', 'Global API setInspectMode called', { on });
+      const ctrl = inspCtrl ?? _inspectControllers.get(canvasId ?? '');
       if (on) {
-        inspCtrl?.enable();
+        ctrl?.enable();
+        mirror?.setInspectMode(true);
       } else {
-        inspCtrl?.disable();
+        ctrl?.disable();
+        mirror?.setInspectMode(false);
       }
+    },
+    getInspectMode: () => {
+      const ctrl = inspCtrl ?? _inspectControllers.get(canvasId ?? '');
+      return ctrl?.active ?? false;
     },
     sweepOrphans: () => store.sweepOrphans(),
     getDiagnostics: () => ({
@@ -318,6 +325,7 @@ function createStubBridge(error?: string, canvasId?: string): R3FDOM {
     getObject3D: () => null,
     getSelectionDisplayTarget: (uuid: string) => uuid,
     setInspectMode: () => {},
+    getInspectMode: () => false,
     sweepOrphans: () => 0,
     getDiagnostics: () => ({
       version,
@@ -561,7 +569,11 @@ export function ThreeDom({
       if (debug) enableDebug(false);
       r3fLog('setup', 'ThreeDom cleanup complete');
     };
-  }, [scene, camera, gl, size, enabled, root, maxDomNodes, initialDepth, debug, inspectProp, canvasId, isPrimary, instanceKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `size` is intentionally excluded:
+  // it's synced every frame via setInteractionState in useFrame. Including it here
+  // would tear down and rebuild the entire bridge on every resize, losing inspect
+  // mode state, selection, and highlights.
+  }, [scene, camera, gl, enabled, root, maxDomNodes, initialDepth, debug, inspectProp, canvasId, isPrimary, instanceKey]);
 
   // -----------------------------------------------------------------------
   // Per-frame sync
