@@ -93,6 +93,33 @@ export function shouldRegister(instanceKey: string, obj: Object3D): boolean {
   return true;
 }
 
+/**
+ * Ensure every ancestor from the scene root down to `obj.parent` is registered
+ * in the store and mirror. This builds the connected parent chain that
+ * DomMirror needs to correctly nest DOM elements, even when those ancestors
+ * don't pass the user-supplied filter.
+ */
+export function ensureAncestorChain(
+  obj: Object3D,
+  store: ObjectStore,
+  mirror: DomMirror,
+): void {
+  const chain: Object3D[] = [];
+  let cursor = obj.parent;
+  while (cursor) {
+    if (store.has(cursor)) break; // already registered — chain is connected
+    chain.push(cursor);
+    cursor = cursor.parent;
+  }
+  // Register from root-most ancestor down so each parent exists before its child
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const ancestor = chain[i];
+    store.register(ancestor);
+    mirror.onObjectAdded(ancestor);
+    mirror.materialize(ancestor.uuid);
+  }
+}
+
 /** Get the store for a canvas instance. Default: primary ('') instance. */
 export function getStore(canvasId = ''): ObjectStore | null { return _stores.get(canvasId) ?? null; }
 /** Get the mirror for a canvas instance. Default: primary ('') instance. */
@@ -245,10 +272,17 @@ function exposeGlobalAPI(
         return;
       }
       obj.userData.__r3fdom_manual = true;
-      store.register(obj);
-      mirror?.onObjectAdded(obj);
-      mirror?.materialize(obj.uuid);
-      r3fLog('bridge', `r3fRegister: "${obj.userData?.testId || obj.name || obj.uuid.slice(0, 8)}" (${obj.type})`);
+      ensureAncestorChain(obj, store!, mirror!);
+      let count = 0;
+      obj.traverse((child) => {
+        if (!store!.has(child)) {
+          store!.register(child);
+          mirror?.onObjectAdded(child);
+          mirror?.materialize(child.uuid);
+          count++;
+        }
+      });
+      r3fLog('bridge', `r3fRegister: "${obj.userData?.testId || obj.name || obj.uuid.slice(0, 8)}" (${obj.type}) — ${count} objects`);
     },
     r3fUnregister: (obj) => {
       if (!store.has(obj)) return;
@@ -530,8 +564,12 @@ export function ThreeDom({
         // added later (caught by the Object3D.add patch).
         if (filter) {
           store!.addTrackedRoot(scene);
+          store!.register(scene);
+          mirror!.onObjectAdded(scene);
           scene.traverse((obj) => {
+            if (obj === scene) return;
             if (filter(obj)) {
+              ensureAncestorChain(obj, store!, mirror!);
               store!.register(obj);
               mirror!.onObjectAdded(obj);
             }

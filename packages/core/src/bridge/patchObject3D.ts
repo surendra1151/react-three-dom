@@ -2,7 +2,7 @@ import { Object3D } from 'three';
 import type { ObjectStore } from '../store/ObjectStore';
 import type { DomMirror } from '../mirror/DomMirror';
 import { r3fLog } from '../debug';
-import { shouldRegister } from './ThreeDom';
+import { shouldRegister, ensureAncestorChain } from './ThreeDom';
 
 // ---------------------------------------------------------------------------
 // Object3D.add / Object3D.remove monkey-patch
@@ -52,6 +52,7 @@ function registerSubtree(
 ): void {
   obj.traverse((child) => {
     if (!store.has(child) && shouldRegister(instanceKey, child)) {
+      ensureAncestorChain(child, store, mirror);
       store.register(child);
       mirror.onObjectAdded(child);
     }

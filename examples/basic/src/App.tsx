@@ -1,16 +1,22 @@
 import { useRef, useState, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { ThreeDom } from '@react-three-dom/core';
+import { ThreeDom, useR3FRegister } from '@react-three-dom/core';
 import * as THREE from 'three';
+
+// ---------------------------------------------------------------------------
+// Mode selector
+// ---------------------------------------------------------------------------
+
+type DemoMode = 'auto' | 'auto-filter' | 'manual';
 
 // ---------------------------------------------------------------------------
 // Scene objects
 // ---------------------------------------------------------------------------
 
-/** A chair mesh that bobs up and down (animated). */
-function Chair() {
+function Chair({ manual }: { manual?: boolean }) {
   const ref = useRef<THREE.Mesh>(null!);
+  if (manual) useR3FRegister(ref);
 
   useFrame(({ clock }) => {
     ref.current.position.y = 0.5 + Math.sin(clock.getElapsedTime() * 2) * 0.1;
@@ -29,11 +35,9 @@ function Chair() {
   );
 }
 
-/** A table mesh. */
 function Table() {
   return (
     <group name="TableGroup" userData={{ testId: 'table-group' }}>
-      {/* Tabletop */}
       <mesh
         position={[2, 0.75, 0]}
         name="Tabletop"
@@ -42,7 +46,6 @@ function Table() {
         <boxGeometry args={[2, 0.1, 1]} />
         <meshStandardMaterial color="#8B4513" />
       </mesh>
-      {/* Legs */}
       {[
         [-0.8, 0.35, -0.4],
         [-0.8, 0.35, 0.4],
@@ -63,7 +66,6 @@ function Table() {
   );
 }
 
-/** Lighting setup. */
 function Lighting() {
   return (
     <group name="Lighting" userData={{ testId: 'lighting-group' }}>
@@ -85,7 +87,6 @@ function Lighting() {
   );
 }
 
-/** A floor plane. */
 function Floor() {
   return (
     <mesh
@@ -101,9 +102,9 @@ function Floor() {
   );
 }
 
-/** A sphere that rotates around the scene. */
-function OrbitingSphere() {
+function OrbitingSphere({ manual }: { manual?: boolean }) {
   const ref = useRef<THREE.Mesh>(null!);
+  if (manual) useR3FRegister(ref);
 
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
@@ -120,11 +121,13 @@ function OrbitingSphere() {
   );
 }
 
-/** A nested group demonstrating hierarchy depth. */
+/**
+ * Nested group — tests that filter with testId correctly registers
+ * deep meshes AND their ancestor chain (Group → Mesh).
+ */
 function DecorGroup() {
   return (
     <group name="Decorations" userData={{ testId: 'decor-group' }}>
-      {/* Vase on table */}
       <mesh
         position={[2, 0.95, 0]}
         name="Vase"
@@ -134,7 +137,6 @@ function DecorGroup() {
         <meshStandardMaterial color="#cc4444" />
       </mesh>
 
-      {/* Stacked boxes in a nested group */}
       <group name="StackedBoxes" position={[-2, 0, -2]} userData={{ testId: 'stacked-boxes' }}>
         {[0, 1, 2].map((i) => (
           <mesh
@@ -152,11 +154,68 @@ function DecorGroup() {
   );
 }
 
+/**
+ * Deep nested group WITHOUT testId on intermediate groups.
+ * Tests the ancestor chain fix: the Mesh has testId but its
+ * parent Group ("Shelf") does NOT — filter should still work.
+ */
+function ShelfGroup() {
+  return (
+    <group name="Shelf" position={[-3, 0, 2]}>
+      <mesh
+        position={[0, 1, 0]}
+        name="Book"
+        userData={{ testId: 'book' }}
+      >
+        <boxGeometry args={[0.3, 0.4, 0.1]} />
+        <meshStandardMaterial color="#2255aa" />
+      </mesh>
+      <mesh
+        position={[0.4, 1, 0]}
+        name="Lamp"
+        userData={{ testId: 'lamp' }}
+      >
+        <cylinderGeometry args={[0.08, 0.12, 0.5, 8]} />
+        <meshStandardMaterial color="#ffcc00" />
+      </mesh>
+    </group>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Status HUD (HTML overlay)
+// Scene wrapper — picks ThreeDom config based on mode
 // ---------------------------------------------------------------------------
 
-function StatusHUD() {
+function SceneContent({ mode }: { mode: DemoMode }) {
+  const isManual = mode === 'manual';
+
+  return (
+    <>
+      <Lighting />
+      <group name="Furniture" userData={{ testId: 'furniture-group' }}>
+        <Chair manual={isManual} />
+        <Table />
+      </group>
+      <Floor />
+      <OrbitingSphere manual={isManual} />
+      <DecorGroup />
+      <ShelfGroup />
+      <OrbitControls />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Filter: only objects with userData.testId
+// ---------------------------------------------------------------------------
+
+const testIdFilter = (obj: THREE.Object3D) => !!obj.userData?.testId;
+
+// ---------------------------------------------------------------------------
+// Status HUD
+// ---------------------------------------------------------------------------
+
+function StatusHUD({ mode, onModeChange }: { mode: DemoMode; onModeChange: (m: DemoMode) => void }) {
   const [stats, setStats] = useState<{
     objectCount: number;
     version: string;
@@ -176,7 +235,6 @@ function StatusHUD() {
     }
   }, []);
 
-  // Poll on an interval (the bridge needs a frame or two to bootstrap)
   useState(() => {
     const id = setInterval(refreshStats, 500);
     return () => clearInterval(id);
@@ -196,7 +254,6 @@ function StatusHUD() {
         fontSize: 13,
         lineHeight: 1.6,
         zIndex: 1000,
-        pointerEvents: 'none',
         userSelect: 'none',
       }}
     >
@@ -215,8 +272,33 @@ function StatusHUD() {
           <div>Version: {stats.version}</div>
         </>
       )}
-      <div style={{ marginTop: 6, fontSize: 11, color: '#aaa' }}>
-        Open DevTools → Elements → #three-dom-root
+      <div style={{ marginTop: 8, fontSize: 11, color: '#aaa', marginBottom: 4 }}>
+        Mode:
+      </div>
+      <div style={{ display: 'flex', gap: 4 }}>
+        {(['auto', 'auto-filter', 'manual'] as DemoMode[]).map((m) => (
+          <button
+            key={m}
+            onClick={() => onModeChange(m)}
+            style={{
+              padding: '3px 8px',
+              fontSize: 11,
+              fontFamily: 'monospace',
+              border: 'none',
+              borderRadius: 4,
+              cursor: 'pointer',
+              background: mode === m ? '#4488ff' : '#444',
+              color: '#fff',
+            }}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+      <div style={{ marginTop: 6, fontSize: 10, color: '#888' }}>
+        {mode === 'auto' && 'All objects registered automatically'}
+        {mode === 'auto-filter' && 'Only objects with userData.testId (+ ancestor chain)'}
+        {mode === 'manual' && 'Only Chair & OrbitingSphere via useR3FRegister'}
       </div>
     </div>
   );
@@ -227,26 +309,21 @@ function StatusHUD() {
 // ---------------------------------------------------------------------------
 
 export function App() {
+  const [mode, setMode] = useState<DemoMode>('auto');
+
   return (
     <>
-      <StatusHUD />
+      <StatusHUD mode={mode} onModeChange={setMode} />
       <Canvas
+        key={mode}
         camera={{ position: [5, 5, 5], fov: 50 }}
         shadows
       >
-        {/* The bridge — renders nothing, just wires up the DOM mirror */}
-        <ThreeDom debug inspect={false} />
+        {mode === 'auto' && <ThreeDom debug />}
+        {mode === 'auto-filter' && <ThreeDom debug filter={testIdFilter} />}
+        {mode === 'manual' && <ThreeDom debug mode="manual" />}
 
-        {/* Scene */}
-        <Lighting />
-        <group name="Furniture" userData={{ testId: 'furniture-group' }}>
-          <Chair />
-          <Table />
-        </group>
-        <Floor />
-        <OrbitingSphere />
-        <DecorGroup />
-        <OrbitControls />
+        <SceneContent mode={mode} />
       </Canvas>
     </>
   );
