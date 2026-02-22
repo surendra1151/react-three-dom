@@ -54,6 +54,13 @@ Pass `{ includeGeometryData: true }` to `inspect()` for vertex/index buffers.
 | `clearSelection()` | Clear all selections |
 | `getSelection()` | Get UUIDs of selected objects |
 
+## Registration
+
+| Method | Description |
+|--------|-------------|
+| `r3fRegister(obj)` | Manually register a Three.js object into the mirror DOM. Warns if the object isn't in the scene graph. |
+| `r3fUnregister(obj)` | Unregister a manually registered object. Won't remove auto-registered objects. |
+
 ## Utility
 
 | Method | Description |
