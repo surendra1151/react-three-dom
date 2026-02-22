@@ -227,6 +227,32 @@ export interface R3FDOM {
     options?: { stepDelayMs?: number; pointerType?: 'mouse' | 'pen' | 'touch'; clickAtEnd?: boolean },
   ): Promise<{ eventCount: number; pointCount: number }>;
 
+  /** Click at an arbitrary world coordinate (projects to screen, dispatches click) */
+  clickAtWorld(
+    point: { x: number; y: number; z: number },
+    options?: { shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean },
+  ): { dispatched: boolean; screenPoint: { x: number; y: number }; behindCamera: boolean };
+  /** Double-click at an arbitrary world coordinate */
+  doubleClickAtWorld(
+    point: { x: number; y: number; z: number },
+    options?: { shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean },
+  ): { dispatched: boolean; screenPoint: { x: number; y: number }; behindCamera: boolean };
+  /** Right-click (context menu) at an arbitrary world coordinate */
+  contextMenuAtWorld(
+    point: { x: number; y: number; z: number },
+    options?: { shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean },
+  ): { dispatched: boolean; screenPoint: { x: number; y: number }; behindCamera: boolean };
+  /** Hover at an arbitrary world coordinate */
+  hoverAtWorld(
+    point: { x: number; y: number; z: number },
+    options?: { shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean },
+  ): { dispatched: boolean; screenPoint: { x: number; y: number }; behindCamera: boolean };
+  /** Click a sequence of world coordinates with delay between each (for drawing tools) */
+  clickAtWorldSequence(
+    points: Array<{ x: number; y: number; z: number }>,
+    options?: { delayMs?: number; shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean },
+  ): Promise<Array<{ dispatched: boolean; screenPoint: { x: number; y: number }; behindCamera: boolean }>>;
+
 
   /** Select an object (shows highlight wireframe in scene) */
   select(idOrUuid: string): void;

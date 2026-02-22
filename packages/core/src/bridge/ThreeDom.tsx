@@ -13,6 +13,7 @@ import { drag3D } from '../interactions/drag';
 import { wheel3D } from '../interactions/wheel';
 import { pointerMiss3D } from '../interactions/pointerMiss';
 import { drawPath as drawPathFn } from '../interactions/drawPath';
+import { clickAtWorld, doubleClickAtWorld, contextMenuAtWorld, hoverAtWorld, clickAtWorldSequence } from '../interactions/worldInteraction';
 import { setInteractionState, clearInteractionState } from '../interactions/resolve';
 import { SelectionManager } from '../highlight/SelectionManager';
 import { Highlighter } from '../highlight/Highlighter';
@@ -183,6 +184,11 @@ function exposeGlobalAPI(
       const result = await drawPathFn(points, options);
       return { eventCount: result.eventCount, pointCount: result.pointCount };
     },
+    clickAtWorld: (point, options) => clickAtWorld(point, options),
+    doubleClickAtWorld: (point, options) => doubleClickAtWorld(point, options),
+    contextMenuAtWorld: (point, options) => contextMenuAtWorld(point, options),
+    hoverAtWorld: (point, options) => hoverAtWorld(point, options),
+    clickAtWorldSequence: (points, options) => clickAtWorldSequence(points, options),
     select: (idOrUuid: string) => {
       const obj = store.getObject3D(idOrUuid);
       if (obj && selMgr) selMgr.select(obj);
@@ -403,6 +409,11 @@ function createStubBridge(error?: string, canvasId?: string): R3FDOM {
     wheel: () => {},
     pointerMiss: () => {},
     drawPath: async () => ({ eventCount: 0, pointCount: 0 }),
+    clickAtWorld: () => ({ dispatched: false, screenPoint: { x: 0, y: 0 }, behindCamera: false }),
+    doubleClickAtWorld: () => ({ dispatched: false, screenPoint: { x: 0, y: 0 }, behindCamera: false }),
+    contextMenuAtWorld: () => ({ dispatched: false, screenPoint: { x: 0, y: 0 }, behindCamera: false }),
+    hoverAtWorld: () => ({ dispatched: false, screenPoint: { x: 0, y: 0 }, behindCamera: false }),
+    clickAtWorldSequence: async () => [],
     select: () => {},
     clearSelection: () => {},
     getSelection: () => [],

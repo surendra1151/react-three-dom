@@ -122,6 +122,21 @@ export {
 } from './interactions/drawPath';
 
 // ---------------------------------------------------------------------------
+// Interactions — world-coordinate (position-centric)
+// ---------------------------------------------------------------------------
+
+export {
+  clickAtWorld,
+  doubleClickAtWorld,
+  contextMenuAtWorld,
+  hoverAtWorld,
+  clickAtWorldSequence,
+  type WorldPoint,
+  type WorldInteractionOptions,
+  type WorldInteractionResult,
+} from './interactions/worldInteraction';
+
+// ---------------------------------------------------------------------------
 // Interactions — event dispatch (low-level)
 // ---------------------------------------------------------------------------
 
