@@ -18,11 +18,6 @@ import {
   BufferGeometry,
   Intersection,
 } from 'three';
-import {
-  computeBoundsTree,
-  disposeBoundsTree,
-  acceleratedRaycast,
-} from 'three-mesh-bvh';
 import type { ObjectStore } from '../store/ObjectStore';
 import { r3fLog } from '../debug';
 
@@ -37,25 +32,29 @@ import { r3fLog } from '../debug';
 //   Three.js's default `intersectObjects(scene.children, true)` O(n).
 //
 // Layer 2 — Per-geometry BVH (three-mesh-bvh):
-//   Patches Three.js so each BufferGeometry builds a Bounding Volume
-//   Hierarchy on first raycast. For high-poly BIM meshes (50k-500k
-//   triangles), this turns per-mesh triangle intersection from O(t)
-//   brute-force into O(log t) tree traversal.
+//   Lazy-loaded on first use. Patches Three.js so each BufferGeometry builds
+//   a Bounding Volume Hierarchy on first raycast. For high-poly BIM meshes
+//   (50k-500k triangles), this turns per-mesh triangle intersection from
+//   O(t) brute-force into O(log t) tree traversal.
 //
 // Combined: ~0.01-0.1ms at 200k objects vs ~200ms without.
 // ---------------------------------------------------------------------------
 
 let _bvhPatched = false;
+let _bvhLoadPromise: Promise<void> | null = null;
 
-function ensureBVHPatched(): void {
-  if (_bvhPatched) return;
-  _bvhPatched = true;
-
-  BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
-  BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
-  Mesh.prototype.raycast = acceleratedRaycast;
-
-  r3fLog('raycast', 'three-mesh-bvh patched into Three.js');
+/** Lazy-load three-mesh-bvh and patch Three.js. Resolves when patch is applied. */
+function loadAndPatchBVH(): Promise<void> {
+  if (_bvhPatched) return Promise.resolve();
+  if (_bvhLoadPromise) return _bvhLoadPromise;
+  _bvhLoadPromise = import('three-mesh-bvh').then((m) => {
+    BufferGeometry.prototype.computeBoundsTree = m.computeBoundsTree;
+    BufferGeometry.prototype.disposeBoundsTree = m.disposeBoundsTree;
+    Mesh.prototype.raycast = m.acceleratedRaycast;
+    _bvhPatched = true;
+    r3fLog('raycast', 'three-mesh-bvh patched into Three.js');
+  });
+  return _bvhLoadPromise;
 }
 
 const _raycaster = /* @__PURE__ */ new Raycaster();
@@ -92,7 +91,8 @@ export class RaycastAccelerator {
 
   constructor(store: ObjectStore) {
     this._store = store;
-    ensureBVHPatched();
+    // Kick off lazy load of three-mesh-bvh; patch applied when chunk loads
+    loadAndPatchBVH();
 
     this._unsubscribe = store.subscribe(() => {
       this._dirty = true;
@@ -118,24 +118,21 @@ export class RaycastAccelerator {
 
     this._targets = targets;
 
-    // Build BVHs incrementally — only for meshes not yet processed.
-    // Spread across frames: cap at 50 BVH builds per rebuild to avoid
-    // blocking the main thread when a large model first loads.
-    let bvhBudget = 50;
-    for (let i = 0; i < targets.length && bvhBudget > 0; i++) {
-      const obj = targets[i];
-      if ((obj as Mesh).isMesh) {
-        const geom = (obj as Mesh).geometry;
-        if (geom && !this._bvhBuiltFor.has(geom) && !geom.boundsTree) {
-          this._ensureBVH(obj);
-          bvhBudget--;
+    // Build BVHs incrementally when three-mesh-bvh has loaded (lazy-loaded).
+    // Only for meshes not yet processed; cap at 50 BVH builds per rebuild.
+    if (_bvhPatched) {
+      let bvhBudget = 50;
+      for (let i = 0; i < targets.length && bvhBudget > 0; i++) {
+        const obj = targets[i];
+        if ((obj as Mesh).isMesh) {
+          const geom = (obj as Mesh).geometry;
+          if (geom && !this._bvhBuiltFor.has(geom) && !geom.boundsTree) {
+            this._ensureBVH(obj);
+            bvhBudget--;
+          }
         }
       }
-    }
-
-    // If we hit the budget, stay dirty so remaining BVHs are built next call
-    if (bvhBudget === 0) {
-      this._dirty = true;
+      if (bvhBudget === 0) this._dirty = true;
     }
   }
 

@@ -8,4 +8,5 @@ export default defineConfig({
   sourcemap: true,
   external: ['three', '@react-three/fiber', 'react', 'react-dom'],
   treeshake: true,
+  minify: true,
 });

@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "description": "Developer tool & testing bridge for React Three Fiber apps",
+  "license": "MIT",
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",

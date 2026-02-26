@@ -2,6 +2,7 @@
   "name": "@react-three-dom/core",
   "version": "0.6.0",
   "description": "DOM mirror, snapshot API, and interaction bridge for React Three Fiber",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
