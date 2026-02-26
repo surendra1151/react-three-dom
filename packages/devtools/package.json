@@ -1,6 +1,6 @@
 {
   "name": "@react-three-dom/devtools",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Chrome DevTools extension — R3F scene inspector as a DevTools tab",
   "license": "MIT",
   "files": ["dist", "manifest.json", "devtools.html", "devtools.js", "panel.html", "icons", "README.md", "PRIVACY.md"],

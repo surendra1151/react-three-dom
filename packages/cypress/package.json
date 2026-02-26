@@ -1,6 +1,6 @@
 {
   "name": "@react-three-dom/cypress",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Cypress E2E testing SDK for React Three Fiber apps",
   "license": "MIT",
   "type": "module",
@@ -19,7 +19,7 @@
       }
     }
   },
-  "files": ["dist", "src/index.d.ts"],
+  "files": ["dist", "src/index.d.ts", "README.md"],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",

@@ -1,6 +1,6 @@
 {
   "name": "@react-three-dom/core",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "DOM mirror, snapshot API, and interaction bridge for React Three Fiber",
   "license": "MIT",
   "type": "module",
@@ -20,7 +20,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "build": "tsup",
