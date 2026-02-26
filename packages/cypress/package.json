@@ -1,6 +1,6 @@
 {
   "name": "@react-three-dom/cypress",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Cypress E2E testing SDK for React Three Fiber apps",
   "license": "MIT",
   "type": "module",
